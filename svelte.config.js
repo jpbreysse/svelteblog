@@ -3,16 +3,23 @@ import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */
 const config = {
-  // Consult https://svelte.dev/docs/kit/integrations
-  // for more information about preprocessors
-  preprocess: vitePreprocess(),
-  
-  kit: {
-    // Use Node.js adapter for Docker deployment
-    adapter: adapter({
-      out: 'build'
-    })
-  }
+	// Consult https://svelte.dev/docs/kit/integrations
+	// for more information about preprocessors
+	preprocess: vitePreprocess(),
+
+	kit: {
+		// Use Node.js adapter for Docker deployment
+		adapter: adapter({
+			out: 'build'
+		}),
+		csrf: {
+			checkOrigin: false // TEMPORARY - remove this after testing
+		}
+
+	}
 };
+
+
+
 
 export default config;
