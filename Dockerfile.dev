@@ -1,0 +1,35 @@
+FROM node:20-alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+RUN npm ci
+RUN npm rebuild better-sqlite3
+
+# Copy .env file so the app can read it
+COPY .env .env
+COPY . .
+
+ENV JWT_SECRET=consistent-development-jwt-secret-key-123456789
+RUN npm run build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+RUN apk add --no-cache python3 make g++
+COPY package*.json ./
+RUN npm ci --only=production
+RUN npm rebuild better-sqlite3
+
+# Copy .env file to production stage
+COPY .env .env
+COPY --from=builder /app/build ./build
+
+RUN addgroup -g 1001 -S nodejs && adduser -S svelte -u 1001
+RUN chown -R svelte:nodejs /app
+USER svelte
+
+ENV NODE_ENV=development
+ENV PORT=8080
+ENV JWT_SECRET=consistent-development-jwt-secret-key-123456789
+
+EXPOSE 8080
+CMD ["node", "build"]
