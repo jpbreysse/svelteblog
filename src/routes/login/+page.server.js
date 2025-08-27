@@ -87,7 +87,7 @@ export const actions = {
       });
       
       // Redirect based on role
-      const redirectTo = user.role === 'admin' ? '/admin' : '/';
+      const redirectTo = user.role === 'admin' ? '/admin' : '/blog';
       console.log('🚀 Redirecting to:', redirectTo);
       
       throw redirect(303, redirectTo);

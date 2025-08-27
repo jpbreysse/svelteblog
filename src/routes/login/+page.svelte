@@ -1,6 +1,7 @@
 <script>
     import { enhance } from '$app/forms';
     import { goto } from '$app/navigation';
+    import { invalidateAll } from '$app/navigation';  // Add this import
     
     export let form;
     export let data;
@@ -33,6 +34,7 @@
         return async ({ result }) => {
           loading = false;
           if (result.type === 'redirect') {
+            await invalidateAll(); 
             goto(result.location);
           }
         };
@@ -85,7 +87,7 @@
           <div class="credential">
             <strong>Admin Account:</strong><br>
             Email: admin@example.com<br>
-            Password: admin123
+            Password: *****
           </div>
         </div>
       </div>

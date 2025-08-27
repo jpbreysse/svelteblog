@@ -284,7 +284,7 @@
   </script>
   
   <svelte:head>
-    <title>Blog - UserApp</title>
+    <title>Blog - UserApp - Version1</title>
     <meta name="description" content="Share your thoughts and stories">
     <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
   </svelte:head>
