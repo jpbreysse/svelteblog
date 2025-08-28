@@ -1,6 +1,7 @@
 
 import bcrypt from 'bcrypt';
 import jwt from 'jsonwebtoken';
+import { JWT_SECRET } from '$env/static/private'; 
 // Removed: import { dev } from '$app/environment';  <- We don't need this anymore
 
 
@@ -10,7 +11,7 @@ console.log('🔍 AUTH.JS - JWT_SECRET first 10 chars:', process.env.JWT_SECRET?
 
 
 // Always use environment variable (no more dev vs production logic)
-const JWT_SECRET = process.env.JWT_SECRET;
+// const JWT_SECRET = process.env.JWT_SECRET;
 
 if (!JWT_SECRET || JWT_SECRET.length < 32) {
   throw new Error('JWT_SECRET must be at least 32 characters long');
