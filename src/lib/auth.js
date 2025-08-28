@@ -9,6 +9,9 @@ console.log('🔍 AUTH.JS - NODE_ENV:', process.env.NODE_ENV);
 console.log('🔍 AUTH.JS - JWT_SECRET length:', process.env.JWT_SECRET?.length);
 console.log('🔍 AUTH.JS - JWT_SECRET first 10 chars:', process.env.JWT_SECRET?.substring(0, 10));
 
+console.log('🔍 Current JWT_SECRET (first 10 chars):', JWT_SECRET?.substring(0, 10));
+console.log('🔍 JWT_SECRET length:', JWT_SECRET?.length);
+
 
 // Always use environment variable (no more dev vs production logic)
 // const JWT_SECRET = process.env.JWT_SECRET;
