@@ -467,3 +467,69 @@ export const blogDB = {
 
 // Export the original db connection (for your existing user management)
 export { db };
+
+// USER Management database operations
+export const userDB = {
+  // Get user by ID
+  getUserById(id) {
+    return db.prepare('SELECT id, email, first_name, last_name, role, status, created_at FROM users WHERE id = ?').get(id);
+  },
+
+  // Verify current password
+  async verifyPassword(userId, currentPassword) {
+    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+    
+    return await bcrypt.compare(currentPassword, user.password_hash);
+  },
+
+  // Change user password
+  async changePassword(userId, currentPassword, newPassword) {
+    // Verify current password first
+    const isCurrentPasswordValid = await this.verifyPassword(userId, currentPassword);
+    if (!isCurrentPasswordValid) {
+      throw new Error('Current password is incorrect');
+    }
+    
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update password in database
+    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
+    
+    if (result.changes === 0) {
+      throw new Error('Failed to update password');
+    }
+    
+    return { success: true, message: 'Password updated successfully' };
+  },
+
+  // Admin: Reset user password (without requiring current password)
+  async resetUserPassword(adminId, targetUserId, newPassword) {
+    // Check if admin has permission
+    const admin = db.prepare('SELECT role FROM users WHERE id = ?').get(adminId);
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Unauthorized: Admin access required');
+    }
+    
+    // Check if target user exists
+    const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
+    if (!targetUser) {
+      throw new Error('Target user not found');
+    }
+    
+    // Hash new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+    
+    // Update password
+    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, targetUserId);
+    
+    if (result.changes === 0) {
+      throw new Error('Failed to reset password');
+    }
+    
+    return { success: true, message: 'Password reset successfully' };
+  }
+};

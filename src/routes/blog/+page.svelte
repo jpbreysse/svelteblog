@@ -2,6 +2,7 @@
 <script>
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
+    import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     
     export let data;
     
@@ -284,8 +285,8 @@
   </script>
   
   <svelte:head>
-    <title>Blog - UserApp - Version1</title>
-    <meta name="description" content="Share your thoughts and stories">
+    <title>Blog - {PUBLIC_APP_NAME}</title>
+    <meta name="description" content={PUBLIC_APP_DESCRIPTION}>
     <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
   </svelte:head>
   
@@ -350,8 +351,8 @@
       <header class="blog-header">
         <div class="header-content">
           <div class="blog-info">
-            <h1 class="blog-title">📝 Community Blog</h1>
-            <p class="blog-description">Share your thoughts, stories, and insights with the community</p>
+            <h1 class="blog-title">📝 {PUBLIC_APP_NAME}</h1>
+            <p class="blog-description">{PUBLIC_APP_DESCRIPTION}</p>
             <div class="blog-stats">
               <span class="stat">📝 {stats.posts} posts</span>
               <span class="stat">📂 {stats.categories} categories</span>
