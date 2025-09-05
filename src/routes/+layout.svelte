@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { invalidateAll } from '$app/navigation';
+	import { PUBLIC_APP_NAME } from '$env/static/public';
 	
 	export let data;
 	
@@ -25,12 +26,13 @@
   
   <nav class="navbar">
 	<div class="nav-brand">
-	  <a href="/">UserApp</a>
+	  <a href="/">{PUBLIC_APP_NAME}</a>
 	</div>
 	
 	<div class="nav-links">
 	  {#if data.user}
 		<span class="user-info">Welcome, {data.user.first_name}!</span>
+		<a href="/profile" class:active={$page.url.pathname === '/profile'}>Profile</a>
 		{#if data.user.role === 'admin'}
 		  <a href="/admin" class:active={$page.url.pathname === '/admin'}>Admin Panel</a>
 		{/if}
@@ -77,9 +79,10 @@
 	}
 	
 	.user-info {
-	  color: #e0e7ff;
+	  color: white;
 	  font-size: 0.875rem;
 	  margin-right: 0.5rem;
+	  font-weight: 500;
 	}
 	
 	.nav-links a, .logout-btn {

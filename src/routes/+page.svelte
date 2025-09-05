@@ -1,17 +1,18 @@
 
 <script>
+    import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     export let data;
   </script>
   
   <svelte:head>
-    <title>UserApp - Home</title>
+    <title>{PUBLIC_APP_NAME} - Home</title>
   </svelte:head>
   
   <div class="home-container">
     {#if data.user}
       <div class="welcome-section">
         <h1>Welcome back, {data.user.first_name}!</h1>
-        <p>You are successfully logged in to UserApp.</p>
+        <p>You are successfully logged in to {PUBLIC_APP_NAME}.</p>
         
         {#if data.user.role === 'admin'}
           <div class="admin-actions">
@@ -34,8 +35,8 @@
       </div>
     {:else}
       <div class="landing-section">
-        <h1>Welcome to UserApp</h1>
-        <p>A secure user management system with admin approval workflow.</p>
+        <h1>Welcome to {PUBLIC_APP_NAME}</h1>
+        <p>{PUBLIC_APP_DESCRIPTION}</p>
         
         <div class="auth-actions">
           <a href="/login" class="primary-btn">Sign In</a>
