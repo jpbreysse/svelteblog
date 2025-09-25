@@ -8,31 +8,90 @@ const db = new Database(dev ? 'dev.db' : 'prod.db');
 db.pragma('foreign_keys = ON');
 db.pragma('journal_mode = WAL');
 
-// Initialize USER tables (your existing setup)
+// Initialize USER tables (updated with display_name)
 try {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
-      role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      approved_at DATETIME,
-      approved_by INTEGER,
-      FOREIGN KEY (approved_by) REFERENCES users(id)
-    )
-  `);
+  // Check if we need to migrate from first_name/last_name to display_name
+  const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+  const hasDisplayName = tableInfo.some(col => col.name === 'display_name');
+  const hasFirstName = tableInfo.some(col => col.name === 'first_name');
   
+  if (!hasDisplayName && hasFirstName) {
+    console.log('🔄 Migrating from first_name/last_name to display_name...');
+    
+    // Add display_name column
+    db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`);
+    
+    // Migrate existing data
+    const users = db.prepare('SELECT id, first_name, last_name FROM users').all();
+    const updateStmt = db.prepare('UPDATE users SET display_name = ? WHERE id = ?');
+    
+    for (const user of users) {
+      const displayName = `${user.first_name} ${user.last_name}`.trim();
+      updateStmt.run(displayName, user.id);
+    }
+    
+    // Create new table with correct schema
+    db.exec(`
+      CREATE TABLE users_new (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'deletion_requested')),
+        role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        approved_at DATETIME,
+        approved_by INTEGER,
+        deletion_requested_at DATETIME,
+        deletion_reason TEXT,
+        FOREIGN KEY (approved_by) REFERENCES users_new(id)
+      )
+    `);
+    
+    // Copy data
+    db.exec(`
+      INSERT INTO users_new (
+        id, email, display_name, password_hash, status, role, 
+        created_at, approved_at, approved_by, deletion_requested_at, deletion_reason
+      )
+      SELECT 
+        id, email, display_name, password_hash, status, role,
+        created_at, approved_at, approved_by, deletion_requested_at, deletion_reason
+      FROM users
+    `);
+    
+    // Replace table
+    db.exec('DROP TABLE users');
+    db.exec('ALTER TABLE users_new RENAME TO users');
+    
+    console.log('✅ Migration to display_name completed!');
+  } else if (!hasDisplayName) {
+    // Create fresh table with display_name
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE NOT NULL,
+        display_name TEXT NOT NULL,
+        password_hash TEXT NOT NULL,
+        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'deletion_requested')),
+        role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        approved_at DATETIME,
+        approved_by INTEGER,
+        deletion_requested_at DATETIME,
+        deletion_reason TEXT,
+        FOREIGN KEY (approved_by) REFERENCES users(id)
+      )
+    `);
+  }
+
   console.log('✅ User tables initialized successfully');
 } catch (error) {
   console.error('❌ Error creating user tables:', error);
   throw error;
 }
 
-// Initialize BLOG tables (new addition)
+// Initialize BLOG tables
 try {
   // Posts table
   db.exec(`
@@ -61,7 +120,7 @@ try {
     )
   `);
 
-  // Post-Tags junction table (many-to-many relationship)
+  // Post-Tags junction table
   db.exec(`
     CREATE TABLE IF NOT EXISTS post_tags (
       post_id INTEGER,
@@ -69,6 +128,31 @@ try {
       PRIMARY KEY (post_id, tag_id),
       FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
       FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Content Reports table
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS content_reports (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      issue_type TEXT NOT NULL CHECK(issue_type IN (
+        'inappropriate', 'copyright', 'gdpr_removal', 'privacy', 
+        'spam', 'misinformation', 'harassment', 'other'
+      )),
+      description TEXT NOT NULL,
+      reporter_email TEXT,
+      post_id INTEGER,
+      post_title TEXT,
+      post_url TEXT,
+      reporter_ip TEXT,
+      user_agent TEXT,
+      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
+      admin_response TEXT,
+      resolved_by INTEGER,
+      resolved_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE SET NULL,
+      FOREIGN KEY (resolved_by) REFERENCES users(id)
     )
   `);
 
@@ -80,6 +164,11 @@ try {
     CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
     CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
     CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
+    CREATE INDEX IF NOT EXISTS idx_reports_status ON content_reports(status);
+    CREATE INDEX IF NOT EXISTS idx_reports_type ON content_reports(issue_type);
+    CREATE INDEX IF NOT EXISTS idx_reports_created ON content_reports(created_at DESC);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
+    CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
   `);
 
   console.log('✅ Blog tables initialized successfully');
@@ -88,30 +177,29 @@ try {
   throw error;
 }
 
-// Create default admin user (your existing logic)
+// Create default admin user
 async function createDefaultAdmin() {
   try {
     const adminExists = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
-    
+
     if (!adminExists) {
       console.log('📝 Creating default admin user...');
-      
+
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      
+
       const insertAdmin = db.prepare(`
-        INSERT INTO users (email, first_name, last_name, password_hash, status, role)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO users (email, display_name, password_hash, status, role)
+        VALUES (?, ?, ?, ?, ?)
       `);
-      
+
       const result = insertAdmin.run(
-        'admin@example.com', 
-        'Admin', 
-        'User', 
-        hashedPassword, 
-        'approved', 
+        'admin@example.com',
+        'Admin User',
+        hashedPassword,
+        'approved',
         'admin'
       );
-      
+
       console.log('✅ Default admin user created with ID:', result.lastInsertRowid);
     } else {
       console.log('✅ Admin user already exists');
@@ -125,7 +213,7 @@ async function createDefaultAdmin() {
 // Initialize admin user
 createDefaultAdmin().catch(console.error);
 
-// BLOG Helper functions
+// Helper functions
 function generateSlug(title) {
   return title
     .toLowerCase()
@@ -153,7 +241,7 @@ export const blogDB = {
     const posts = db.prepare(`
       SELECT 
         p.*,
-        u.first_name, u.last_name, u.email,
+        u.display_name, u.email,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -166,7 +254,7 @@ export const blogDB = {
 
     return posts.map(post => ({
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -178,7 +266,7 @@ export const blogDB = {
     const posts = db.prepare(`
       SELECT 
         p.*,
-        u.first_name, u.last_name,
+        u.display_name,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -191,7 +279,7 @@ export const blogDB = {
 
     return posts.map(post => ({
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -203,7 +291,7 @@ export const blogDB = {
     const post = db.prepare(`
       SELECT 
         p.*,
-        u.first_name, u.last_name, u.email,
+        u.display_name, u.email,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -217,7 +305,7 @@ export const blogDB = {
 
     return {
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -229,7 +317,7 @@ export const blogDB = {
     const post = db.prepare(`
       SELECT 
         p.*,
-        u.first_name, u.last_name, u.email,
+        u.display_name, u.email,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -243,7 +331,7 @@ export const blogDB = {
 
     return {
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -253,7 +341,7 @@ export const blogDB = {
   // Create new post
   createPost(postData, authorId) {
     const { title, content, category = 'thoughts', tags = [] } = postData;
-    
+
     if (!title || !content) {
       throw new Error('Title and content are required');
     }
@@ -287,19 +375,19 @@ export const blogDB = {
   // Update existing post
   updatePost(id, postData, authorId) {
     const { title, content, category, tags = [] } = postData;
-    
+
     // Check if user owns the post or is admin
     const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
     if (!post) {
       throw new Error('Post not found');
     }
-    
+
     // Only allow author or admin to edit
     const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
     if (post.author_id !== authorId && user?.role !== 'admin') {
       throw new Error('Unauthorized to edit this post');
     }
-    
+
     const excerpt = generateExcerpt(content);
     const readTime = calculateReadTime(content);
     const slug = generateSlug(title);
@@ -335,24 +423,22 @@ export const blogDB = {
     if (!post) {
       throw new Error('Post not found');
     }
-    
+
     const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
     if (post.author_id !== authorId && user?.role !== 'admin') {
       throw new Error('Unauthorized to delete this post');
     }
-    
+
     const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id);
     return result.changes > 0;
   },
 
-  // Update post tags (helper method)
+  // Update post tags
   updatePostTags(postId, tagNames) {
-    // Remove existing tags for this post
     db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId);
 
     if (tagNames.length === 0) return;
 
-    // Insert or get tags
     const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
     const getTagId = db.prepare('SELECT id FROM tags WHERE name = ?');
     const linkPostTag = db.prepare('INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)');
@@ -374,7 +460,7 @@ export const blogDB = {
     let sql = `
       SELECT 
         p.*,
-        u.first_name, u.last_name,
+        u.display_name,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -383,7 +469,7 @@ export const blogDB = {
       WHERE p.published = 1
         AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ?)
     `;
-    
+
     const params = [`%${query}%`, `%${query}%`, `%${query}%`];
 
     if (category) {
@@ -397,7 +483,7 @@ export const blogDB = {
 
     return posts.map(post => ({
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -409,7 +495,7 @@ export const blogDB = {
     const posts = db.prepare(`
       SELECT 
         p.*,
-        u.first_name, u.last_name,
+        u.display_name,
         GROUP_CONCAT(t.name) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -422,7 +508,7 @@ export const blogDB = {
 
     return posts.map(post => ({
       ...post,
-      author: `${post.first_name} ${post.last_name}`,
+      author: post.display_name,
       tags: post.tags ? post.tags.split(',') : [],
       created_at: new Date(post.created_at),
       updated_at: new Date(post.updated_at)
@@ -445,7 +531,7 @@ export const blogDB = {
     return db.prepare(`
       SELECT t.name, COUNT(pt.post_id) as count
       FROM tags t
-      LEFT JOIN post_tags pt ON t.id = pt.id
+      LEFT JOIN post_tags pt ON t.id = pt.tag_id
       GROUP BY t.id, t.name
       ORDER BY count DESC, t.name
     `).all();
@@ -456,7 +542,7 @@ export const blogDB = {
     const postCount = db.prepare('SELECT COUNT(*) as count FROM posts WHERE published = 1').get();
     const categoryCount = db.prepare('SELECT COUNT(DISTINCT category) as count FROM posts WHERE published = 1').get();
     const tagCount = db.prepare('SELECT COUNT(*) as count FROM tags').get();
-    
+
     return {
       posts: postCount.count,
       categories: categoryCount.count,
@@ -465,14 +551,14 @@ export const blogDB = {
   }
 };
 
-// Export the original db connection (for your existing user management)
+// Export the db connection
 export { db };
 
 // USER Management database operations
 export const userDB = {
   // Get user by ID
   getUserById(id) {
-    return db.prepare('SELECT id, email, first_name, last_name, role, status, created_at FROM users WHERE id = ?').get(id);
+    return db.prepare('SELECT id, email, display_name, role, status, created_at FROM users WHERE id = ?').get(id);
   },
 
   // Verify current password
@@ -481,55 +567,138 @@ export const userDB = {
     if (!user) {
       throw new Error('User not found');
     }
-    
+
     return await bcrypt.compare(currentPassword, user.password_hash);
   },
 
   // Change user password
   async changePassword(userId, currentPassword, newPassword) {
-    // Verify current password first
     const isCurrentPasswordValid = await this.verifyPassword(userId, currentPassword);
     if (!isCurrentPasswordValid) {
       throw new Error('Current password is incorrect');
     }
-    
-    // Hash new password
+
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    
-    // Update password in database
     const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
-    
+
     if (result.changes === 0) {
       throw new Error('Failed to update password');
     }
-    
+
     return { success: true, message: 'Password updated successfully' };
   },
 
-  // Admin: Reset user password (without requiring current password)
-  async resetUserPassword(adminId, targetUserId, newPassword) {
-    // Check if admin has permission
-    const admin = db.prepare('SELECT role FROM users WHERE id = ?').get(adminId);
-    if (!admin || admin.role !== 'admin') {
-      throw new Error('Unauthorized: Admin access required');
+  // Complete immediate account deletion
+  async completeAccountDeletion(userId, reason = '') {
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      throw new Error('User not found');
     }
-    
-    // Check if target user exists
-    const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
-    if (!targetUser) {
-      throw new Error('Target user not found');
+
+    const postCount = db.prepare('SELECT COUNT(*) as count FROM posts WHERE author_id = ?').get(userId);
+
+    const transaction = db.transaction(() => {
+      db.prepare(`DELETE FROM post_tags WHERE post_id IN (SELECT id FROM posts WHERE author_id = ?)`).run(userId);
+      db.prepare('DELETE FROM posts WHERE author_id = ?').run(userId);
+      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    });
+
+    transaction();
+
+    console.log(`🗑️ User ${user.email} deleted their account. ${postCount.count} posts removed. Reason: ${reason}`);
+
+    return {
+      success: true,
+      message: `Account and ${postCount.count} posts deleted permanently`,
+      deletedPosts: postCount.count
+    };
+  },
+
+  // Get users with pending deletion requests
+  getPendingDeletions() {
+    return db.prepare(`
+      SELECT id, email, display_name, deletion_requested_at, deletion_reason,
+             (SELECT COUNT(*) FROM posts WHERE author_id = users.id) as post_count
+      FROM users 
+      WHERE status = 'deletion_requested'
+      ORDER BY deletion_requested_at ASC
+    `).all();
+  },
+
+  // Create content report
+  createContentReport(reportData) {
+    const {
+      issue_type, description, reporter_email, post_id, post_title, 
+      post_url, reporter_ip, user_agent
+    } = reportData;
+
+    const result = db.prepare(`
+      INSERT INTO content_reports (
+        issue_type, description, reporter_email, post_id, post_title,
+        post_url, reporter_ip, user_agent
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      issue_type, description, reporter_email, post_id, post_title,
+      post_url, reporter_ip, user_agent
+    );
+
+    return {
+      success: true,
+      reportId: result.lastInsertRowid
+    };
+  },
+
+  // Get all content reports
+  getAllContentReports() {
+    return db.prepare(`
+      SELECT cr.*, 
+             p.title as current_post_title,
+             u.display_name
+      FROM content_reports cr
+      LEFT JOIN posts p ON cr.post_id = p.id
+      LEFT JOIN users u ON cr.resolved_by = u.id
+      ORDER BY 
+        CASE cr.status 
+          WHEN 'pending' THEN 1 
+          WHEN 'reviewed' THEN 2 
+          ELSE 3 
+        END,
+        cr.created_at DESC
+    `).all();
+  },
+
+  // Get content report by ID
+  getContentReportById(id) {
+    return db.prepare(`
+      SELECT cr.*, 
+             p.title as current_post_title,
+             u.display_name
+      FROM content_reports cr
+      LEFT JOIN posts p ON cr.post_id = p.id
+      LEFT JOIN users u ON cr.resolved_by = u.id
+      WHERE cr.id = ?
+    `).get(id);
+  },
+
+  // Update content report status
+  updateContentReportStatus(reportId, status, adminResponse = null, resolvedBy = null) {
+    const validStatuses = ['pending', 'reviewed', 'resolved', 'dismissed'];
+    if (!validStatuses.includes(status)) {
+      throw new Error('Invalid status');
     }
-    
-    // Hash new password
-    const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    
-    // Update password
-    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, targetUserId);
-    
+
+    const resolvedAt = (status === 'resolved' || status === 'dismissed') ? new Date().toISOString() : null;
+
+    const result = db.prepare(`
+      UPDATE content_reports 
+      SET status = ?, admin_response = ?, resolved_by = ?, resolved_at = ?
+      WHERE id = ?
+    `).run(status, adminResponse, resolvedBy, resolvedAt, reportId);
+
     if (result.changes === 0) {
-      throw new Error('Failed to reset password');
+      throw new Error('Report not found');
     }
-    
-    return { success: true, message: 'Password reset successfully' };
+
+    return { success: true };
   }
 };

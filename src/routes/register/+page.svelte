@@ -21,8 +21,26 @@
 	<div class="register-card">
 		<h1>Create Account</h1>
 		<p>
-			Please fill out the form below. Your account will need admin approval before you can log in.
+		Please fill out the form below. Your account will need admin approval before you can log in.
 		</p>
+    
+    {#if form?.error}
+      <div class="error-banner">
+        ❌ {form.error}
+      </div>
+    {/if}
+    
+    {#if form?.success}
+      <div class="success-banner">
+        ✅ {form.success}
+      </div>
+    {/if}
+    
+    {#if form?.errors?.general}
+      <div class="error-banner">
+        ❌ {form.errors.general}
+      </div>
+    {/if}
 
 		<form
 			method="POST"
@@ -46,34 +64,20 @@
 				{/if}
 			</div>
 
-			<div class="form-row">
-				<div class="form-group">
-					<label for="first_name">First Name</label>
-					<input
-						type="text"
-						id="first_name"
-						name="first_name"
-						required
-						class:error={form?.errors?.first_name}
-					/>
-					{#if form?.errors?.first_name}
-						<span class="error-message">{form.errors.first_name}</span>
-					{/if}
-				</div>
-
-				<div class="form-group">
-					<label for="last_name">Last Name</label>
-					<input
-						type="text"
-						id="last_name"
-						name="last_name"
-						required
-						class:error={form?.errors?.last_name}
-					/>
-					{#if form?.errors?.last_name}
-						<span class="error-message">{form.errors.last_name}</span>
-					{/if}
-				</div>
+			<div class="form-group">
+				<label for="display_name">Display Name</label>
+				<input
+					type="text"
+					id="display_name"
+					name="display_name"
+					required
+					placeholder="How should we call you?"
+					class:error={form?.errors?.display_name}
+				/>
+				{#if form?.errors?.display_name}
+					<span class="error-message">{form.errors.display_name}</span>
+				{/if}
+				<small class="help-text">This is how your name will appear on your posts and profile.</small>
 			</div>
 
 			<div class="form-group">
@@ -140,19 +144,35 @@
 	}
 
 	p {
-		text-align: center;
-		color: #6b7280;
-		margin-bottom: 2rem;
+	text-align: center;
+	color: #6b7280;
+	margin-bottom: 2rem;
 	}
+  
+  .error-banner {
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-size: 0.875rem;
+    border: 1px solid #fca5a5;
+  }
+  
+  .success-banner {
+    background: #d1fae5;
+    color: #065f46;
+    padding: 0.75rem;
+    border-radius: 4px;
+    margin-bottom: 1.5rem;
+    text-align: center;
+    font-size: 0.875rem;
+    border: 1px solid #a7f3d0;
+  }
 
 	.form-group {
 		margin-bottom: 1.5rem;
-	}
-
-	.form-row {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 1rem;
 	}
 
 	label {
@@ -183,6 +203,13 @@
 
 	.error-message {
 		color: #ef4444;
+		font-size: 0.875rem;
+		margin-top: 0.25rem;
+		display: block;
+	}
+
+	.help-text {
+		color: #6b7280;
 		font-size: 0.875rem;
 		margin-top: 0.25rem;
 		display: block;

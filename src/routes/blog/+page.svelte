@@ -2,80 +2,119 @@
 <script>
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
+    import { invalidateAll, invalidate } from '$app/navigation';
     import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
+    import ReportModal from '$lib/components/ReportModal.svelte';
     
     export let data;
     
-    let posts = [];
+    // Use server-loaded data - these will be reactive to data changes
+    $: posts = data.posts || [];
+    $: categories = data.categories || [];
+    $: stats = data.stats || { posts: 0, categories: 0, tags: 0 };
+    $: searchQuery = data.searchQuery || '';
+    $: selectedCategory = data.categoryFilter || 'all';
+    
+    // Debug reactive updates
+    $: console.log('🔄 Posts updated, count:', posts.length);
+    
     let showEditor = false;
     let editingPost = null;
-    let searchQuery = '';
-    let selectedCategory = 'all';
     let quill = null;
     let editorContainer;
     let loading = false;
-    let categories = [];
-    let stats = { posts: 0, categories: 0, tags: 0 };
+    
+    // Report modal state
+    let showReportModal = false;
+    let reportPostData = {};
+    
+    // Validation constants
+    const VALIDATION_LIMITS = {
+      title: { max: 200, warning: 180 },
+      content: { max: 50000, warning: 45000 },
+      tags: { max: 10, tagLength: 30 },
+      excerpt: { max: 500 }
+    };
+    
+    // Validation state
+    let validationErrors = [];
+    let validationWarnings = [];
+    
+    // Reactive validation
+    $: if (editingPost) {
+      validatePost();
+    }
     
     onMount(async () => {
-      await loadPosts();
-      await loadCategories();
-      await loadStats();
+      // No need to load posts on client-side anymore
+      // Data is already loaded server-side
     });
     
-    // API functions
-    async function loadPosts() {
-      loading = true;
-      try {
-        const params = new URLSearchParams();
-        if (searchQuery) params.set('search', searchQuery);
-        if (selectedCategory !== 'all') params.set('category', selectedCategory);
-        
-        const response = await fetch(`/api/posts?${params}`);
-        const result = await response.json();
-        
-        if (result.success) {
-          posts = result.posts.map(post => ({
-            ...post,
-            created_at: new Date(post.created_at),
-            updated_at: new Date(post.updated_at)
-          }));
-        } else {
-          console.error('Failed to load posts:', result.error);
-          posts = [];
+    // Function to handle search form submission
+    function handleSearch() {
+      const params = new URLSearchParams();
+      if (searchQuery) params.set('search', searchQuery);
+      if (selectedCategory !== 'all') params.set('category', selectedCategory);
+      
+      const url = `/blog${params.toString() ? '?' + params.toString() : ''}`;
+      goto(url);
+    }
+    
+    // Debounced search
+    let searchTimeout;
+    function debounceSearch() {
+      clearTimeout(searchTimeout);
+      searchTimeout = setTimeout(handleSearch, 500);
+    }
+    
+    // Validation function
+    function validatePost() {
+      if (!editingPost) return;
+      
+      validationErrors = [];
+      validationWarnings = [];
+      
+      // Title validation
+      if (editingPost.title) {
+        if (editingPost.title.length > VALIDATION_LIMITS.title.max) {
+          validationErrors.push(`Title must be ${VALIDATION_LIMITS.title.max} characters or less`);
+        } else if (editingPost.title.length > VALIDATION_LIMITS.title.warning) {
+          validationWarnings.push(`Title is getting long (${editingPost.title.length}/${VALIDATION_LIMITS.title.max})`);
         }
-      } catch (error) {
-        console.error('Error loading posts:', error);
-        posts = [];
-      } finally {
-        loading = false;
+      }
+      
+      // Content validation
+      if (editingPost.content && quill) {
+        const textContent = quill.getText().trim();
+        if (textContent.length > VALIDATION_LIMITS.content.max) {
+          validationErrors.push(`Content must be ${VALIDATION_LIMITS.content.max} characters or less`);
+        } else if (textContent.length > VALIDATION_LIMITS.content.warning) {
+          validationWarnings.push(`Content is getting very long (${textContent.length.toLocaleString()}/${VALIDATION_LIMITS.content.max.toLocaleString()})`);
+        }
+      }
+      
+      // Tags validation
+      if (editingPost.tags && editingPost.tags.length > 0) {
+        if (editingPost.tags.length > VALIDATION_LIMITS.tags.max) {
+          validationErrors.push(`Maximum ${VALIDATION_LIMITS.tags.max} tags allowed`);
+        }
+        
+        editingPost.tags.forEach((tag, index) => {
+          if (tag.length > VALIDATION_LIMITS.tags.tagLength) {
+            validationErrors.push(`Tag "${tag}" is too long (max ${VALIDATION_LIMITS.tags.tagLength} characters)`);
+          }
+        });
+        
+        if (editingPost.tags.length > 7) {
+          validationWarnings.push(`Consider using fewer tags for better organization`);
+        }
       }
     }
     
-    async function loadCategories() {
-      try {
-        const response = await fetch('/api/categories');
-        const result = await response.json();
-        
-        if (result.success) {
-          categories = result.categories;
-        }
-      } catch (error) {
-        console.error('Error loading categories:', error);
-      }
-    }
-    
-    async function loadStats() {
-      try {
-        const response = await fetch('/api/stats');
-        const result = await response.json();
-        
-        if (result.success) {
-          stats = result.stats;
-        }
-      } catch (error) {
-        console.error('Error loading stats:', error);
-      }
+    // Get content length for display
+    function getContentLength() {
+      if (!quill) return 0;
+      return quill.getText().trim().length;
     }
     
     async function savePost() {
@@ -85,7 +124,8 @@
         return;
       }
       
-      if (!editingPost.title.trim()) {
+      // Basic validation
+      if (!editingPost.title?.trim()) {
         alert('Please add a title for your post');
         return;
       }
@@ -95,9 +135,22 @@
         editingPost.content = quill.root.innerHTML;
       }
       
-      if (!editingPost.content.trim()) {
+      if (!editingPost.content?.trim()) {
         alert('Please add some content to your post');
         return;
+      }
+      
+      // Check for validation errors
+      validatePost();
+      if (validationErrors.length > 0) {
+        alert(`Please fix the following issues:\n• ${validationErrors.join('\n• ')}`);
+        return;
+      }
+      
+      // Show warnings but allow saving
+      if (validationWarnings.length > 0) {
+        const proceed = confirm(`Warning:\n• ${validationWarnings.join('\n• ')}\n\nDo you want to continue saving?`);
+        if (!proceed) return;
       }
       
       loading = true;
@@ -129,12 +182,15 @@
         const result = await response.json();
         
         if (result.success) {
+          console.log('✅ Post saved successfully:', result);
           alert('✅ Post saved successfully!');
           showEditor = false;
           editingPost = null;
           quill = null;
-          await loadPosts();
-          await loadStats();
+          // Invalidate all data and reload current page
+          console.log('🔄 Invalidating data...');
+          await invalidateAll();
+          console.log('✅ Data invalidated, posts should refresh');
         } else {
           alert(`❌ Error saving post: ${result.error}`);
         }
@@ -159,8 +215,8 @@
         
         if (result.success) {
           alert('✅ Post deleted successfully!');
-          await loadPosts();
-          await loadStats();
+          // Invalidate all data and reload current page
+          await invalidateAll();
         } else {
           alert(`❌ Error deleting post: ${result.error}`);
         }
@@ -202,9 +258,12 @@
           quill.root.innerHTML = editingPost.content;
         }
         
-        // Update content as user types
+        // Update content as user types and validate
         quill.on('text-change', () => {
           editingPost.content = quill.root.innerHTML;
+          // Debounce validation to avoid excessive checks
+          clearTimeout(window.validationTimeout);
+          window.validationTimeout = setTimeout(validatePost, 300);
         });
         
       } catch (error) {
@@ -257,12 +316,12 @@
       quill = null;
     }
     
-    // Reactive search and filtering
-    $: {
-      if (searchQuery !== undefined || selectedCategory !== undefined) {
-        const debounceTimer = setTimeout(loadPosts, 300);
-      }
-    }
+    // Reactive search and filtering - remove this old code
+    // $: {
+    //   if (searchQuery !== undefined || selectedCategory !== undefined) {
+    //     const debounceTimer = setTimeout(loadPosts, 300);
+    //   }
+    // }
     
     function formatDate(date) {
       return date.toLocaleDateString('en-US', { 
@@ -281,6 +340,16 @@
     
     function canEditPost(post) {
       return data.user && (post.author_id === data.user.id || data.user.role === 'admin');
+    }
+    
+    // Report modal functions
+    function openReportModal(post = null) {
+      reportPostData = {
+        postId: post?.id || '',
+        postTitle: post?.title || 'General Content Issue',
+        postUrl: post ? `${window.location.origin}/blog/${post.slug}` : window.location.href
+      };
+      showReportModal = true;
     }
   </script>
   
@@ -304,12 +373,20 @@
         </div>
         
         <div class="post-meta-form">
-          <input 
-            bind:value={editingPost.title}
-            placeholder="Your post title..."
-            class="title-input"
-            disabled={loading}
-          />
+          <div class="input-group">
+            <input 
+              bind:value={editingPost.title}
+              placeholder="Your post title..."
+              class="title-input"
+              class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}
+              class:error={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.max}
+              maxlength={VALIDATION_LIMITS.title.max + 50}
+              disabled={loading}
+            />
+            <div class="char-counter" class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}>
+              {editingPost.title ? editingPost.title.length : 0}/{VALIDATION_LIMITS.title.max}
+            </div>
+          </div>
           
           <div class="meta-row">
             <select bind:value={editingPost.category} class="category-select" disabled={loading}>
@@ -323,19 +400,46 @@
               <option value="politics">Politics</option>
             </select>
             
-            <input 
-              value={editingPost.tags ? editingPost.tags.join(', ') : ''}
-              on:blur={handleTagsInput}
-              placeholder="Tags (comma separated)"
-              class="tags-input"
-              disabled={loading}
-            />
+            <div class="input-group">
+              <input 
+                value={editingPost.tags ? editingPost.tags.join(', ') : ''}
+                on:blur={handleTagsInput}
+                placeholder="Tags (comma separated, max 10)"
+                class="tags-input"
+                class:error={editingPost.tags && editingPost.tags.length > VALIDATION_LIMITS.tags.max}
+                disabled={loading}
+              />
+              <div class="tag-counter" class:warning={editingPost.tags && editingPost.tags.length > 7}>
+                {editingPost.tags ? editingPost.tags.length : 0}/{VALIDATION_LIMITS.tags.max} tags
+              </div>
+            </div>
           </div>
         </div>
         
         <div class="editor-wrapper">
+          <div class="editor-header-info">
+            <span class="content-counter" class:warning={getContentLength() > VALIDATION_LIMITS.content.warning}>
+              📝 {getContentLength().toLocaleString()}/{VALIDATION_LIMITS.content.max.toLocaleString()} characters
+            </span>
+          </div>
           <div bind:this={editorContainer} id="blog-editor" class="quill-editor-container"></div>
         </div>
+        
+        <!-- Validation Messages -->
+        {#if validationErrors.length > 0 || validationWarnings.length > 0}
+          <div class="validation-messages">
+            {#each validationErrors as error}
+              <div class="validation-error">
+                ❌ {error}
+              </div>
+            {/each}
+            {#each validationWarnings as warning}
+              <div class="validation-warning">
+                ⚠️ {warning}
+              </div>
+            {/each}
+          </div>
+        {/if}
         
         <div class="editor-footer">
           <button class="btn btn-primary" on:click={savePost} disabled={loading || !editingPost.title?.trim()}>
@@ -379,6 +483,7 @@
           <div class="search-bar">
             <input 
               bind:value={searchQuery}
+              on:input={debounceSearch}
               placeholder="Search posts..."
               class="search-input"
               disabled={loading}
@@ -386,7 +491,7 @@
             <span class="search-icon">🔍</span>
           </div>
           
-          <select bind:value={selectedCategory} class="category-filter" disabled={loading}>
+          <select bind:value={selectedCategory} on:change={handleSearch} class="category-filter" disabled={loading}>
             <option value="all">All Categories</option>
             {#each categories as category}
               <option value={category.category}>
@@ -458,14 +563,36 @@
                 
                 <div class="post-footer">
                   <a href="/blog/{post.slug}" class="read-more">Read More →</a>
+                  <button class="report-link" on:click={() => openReportModal(post)} title="Report content issue">
+                    ⚠️ Report
+                  </button>
                 </div>
               </article>
             {/each}
           </div>
         {/if}
       </main>
+      
+      <!-- Blog Footer with General Report Link -->
+      <footer class="blog-footer">
+        <div class="footer-content">
+          <p>© 2025 {PUBLIC_APP_NAME}. Help us maintain a safe community.</p>
+          <button class="general-report-link" on:click={() => openReportModal()}>
+            ⚠️ Report Content Issue
+          </button>
+        </div>
+      </footer>
     {/if}
   </div>
+  
+  <!-- Report Modal -->
+  <ReportModal 
+    isOpen={showReportModal}
+    postTitle={reportPostData.postTitle}
+    postUrl={reportPostData.postUrl}
+    postId={reportPostData.postId}
+    on:close={() => showReportModal = false}
+  />
   
   <style>
     .blog-container {
@@ -697,6 +824,9 @@
     .post-footer {
       border-top: 1px solid #e5e7eb;
       padding-top: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     
     .read-more {
@@ -708,6 +838,22 @@
     
     .read-more:hover {
       text-decoration: underline;
+    }
+    
+    .report-link {
+      background: none;
+      border: none;
+      color: #6b7280;
+      font-size: 0.75rem;
+      cursor: pointer;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      transition: all 0.2s;
+    }
+    
+    .report-link:hover {
+      background: #f3f4f6;
+      color: #dc2626;
     }
     
     /* Editor Styles */
@@ -736,6 +882,11 @@
       margin-bottom: 2rem;
     }
     
+    .input-group {
+      position: relative;
+      margin-bottom: 1rem;
+    }
+    
     .title-input {
       width: 100%;
       padding: 1rem;
@@ -743,8 +894,28 @@
       font-weight: 600;
       border: 1px solid #d1d5db;
       border-radius: 8px;
-      margin-bottom: 1rem;
       box-sizing: border-box;
+      transition: border-color 0.2s;
+    }
+    
+    .title-input.warning {
+      border-color: #f59e0b;
+    }
+    
+    .title-input.error {
+      border-color: #dc2626;
+    }
+    
+    .char-counter, .tag-counter, .content-counter {
+      font-size: 0.75rem;
+      color: #6b7280;
+      margin-top: 0.25rem;
+      display: block;
+    }
+    
+    .char-counter.warning, .tag-counter.warning, .content-counter.warning {
+      color: #f59e0b;
+      font-weight: 500;
     }
     
     .meta-row {
@@ -758,6 +929,52 @@
       border: 1px solid #d1d5db;
       border-radius: 6px;
       font-size: 1rem;
+      transition: border-color 0.2s;
+    }
+    
+    .tags-input.error {
+      border-color: #dc2626;
+    }
+    
+    .editor-header-info {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 0.5rem;
+    }
+    
+    .validation-messages {
+      background: #fef7f0;
+      border: 1px solid #fed7aa;
+      border-radius: 6px;
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    
+    .validation-error {
+      color: #dc2626;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .validation-error:last-child {
+      margin-bottom: 0;
+    }
+    
+    .validation-warning {
+      color: #f59e0b;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    
+    .validation-warning:last-child {
+      margin-bottom: 0;
     }
     
     .editor-wrapper {
@@ -808,6 +1025,46 @@
     .empty-state h2 {
       color: #374151;
       margin-bottom: 0.5rem;
+    }
+    
+    /* Blog Footer */
+    .blog-footer {
+      background: #f8fafc;
+      border-top: 1px solid #e2e8f0;
+      padding: 2rem;
+      margin-top: 3rem;
+      border-radius: 8px;
+    }
+    
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    
+    .footer-content p {
+      color: #6b7280;
+      margin: 0;
+      font-size: 0.875rem;
+    }
+    
+    .general-report-link {
+      background: none;
+      border: 1px solid #d1d5db;
+      color: #6b7280;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .general-report-link:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
     }
     
     /* Responsive Design */

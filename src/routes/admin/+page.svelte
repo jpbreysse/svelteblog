@@ -32,6 +32,20 @@
   <div class="admin-container">
     <h1>User Management</h1>
     
+    <!-- Admin Navigation -->
+    <div class="admin-nav">
+      <a href="/admin/posts" class="nav-link posts-link">
+        📝 Posts Management
+        <span class="info-badge">{data.postStats?.total || 0} posts</span>
+      </a>
+      <a href="/admin/reports" class="nav-link reports-link">
+        📝 Content Reports
+        {#if data.reportStats && data.reportStats.pending > 0}
+          <span class="badge">{data.reportStats.pending}</span>
+        {/if}
+      </a>
+    </div>
+    
     <div class="controls">
       <div class="filter-group">
         <label for="status-filter">Filter by Status:</label>
@@ -65,7 +79,7 @@
         <table>
           <thead>
             <tr>
-              <th>Name</th>
+              <th>Display Name</th>
               <th>Email</th>
               <th>Status</th>
               <th>Created</th>
@@ -76,7 +90,7 @@
             {#each filteredUsers as user}
               <tr class="user-row" class:pending={user.status === 'pending'}>
                 <td class="name-cell">
-                  {user.first_name} {user.last_name}
+                  {user.display_name}
                   {#if user.role === 'admin'}
                     <span class="admin-badge">Admin</span>
                   {/if}
@@ -136,6 +150,60 @@
       color: #1f2937;
       margin-bottom: 2rem;
     }
+    
+    .admin-nav {
+    background: white;
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+      display: flex;
+      gap: 1rem;
+      flex-wrap: wrap;
+    }
+    
+    .nav-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    background: #2563eb;
+    color: white;
+    text-decoration: none;
+      border-radius: 6px;
+      font-weight: 500;
+      transition: all 0.2s;
+    }
+    
+  .nav-link:hover {
+    background: #1d4ed8;
+  }
+  
+  .nav-link.posts-link {
+    background: #059669;
+  }
+  
+  .nav-link.posts-link:hover {
+    background: #047857;
+  }
+    
+    .badge {
+    background: #dc2626;
+    color: white;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 600;
+    }
+  
+  .info-badge {
+    background: rgba(255, 255, 255, 0.2);
+    color: white;
+    font-size: 0.75rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 9999px;
+    font-weight: 500;
+  }
     
     .controls {
       display: flex;

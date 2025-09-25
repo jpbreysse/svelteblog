@@ -31,15 +31,21 @@
 	
 	<div class="nav-links">
 	  {#if data.user}
-		<span class="user-info">Welcome, {data.user.first_name}!</span>
-		<a href="/profile" class:active={$page.url.pathname === '/profile'}>Profile</a>
+		<!-- Links for logged-in users -->
+		<a href="/blog" class:active={$page.url.pathname === '/blog'}>📝 Blog</a>
+		<a href="/about" class:active={$page.url.pathname === '/about'}>ℹ️ About</a>
+		<span class="user-info">Welcome, {data.user.display_name}!</span>
+		<a href="/profile" class:active={$page.url.pathname === '/profile'}>👤 Profile</a>
 		{#if data.user.role === 'admin'}
-		  <a href="/admin" class:active={$page.url.pathname === '/admin'}>Admin Panel</a>
+		  <a href="/admin" class:active={$page.url.pathname === '/admin'}>⚙️ Admin Panel</a>
 		{/if}
-		<button on:click={logout} class="logout-btn">Logout</button>
+		<button on:click={logout} class="logout-btn">🚪 Logout</button>
 	  {:else}
-		<a href="/login" class:active={$page.url.pathname === '/login'}>Sign In</a>
-		<a href="/register" class:active={$page.url.pathname === '/register'}>Register</a>
+		<!-- Links for non-logged-in users -->
+		<a href="/blog" class:active={$page.url.pathname === '/blog'}>📝 Blog</a>
+		<a href="/about" class:active={$page.url.pathname === '/about'}>ℹ️ About</a>
+		<a href="/login" class:active={$page.url.pathname === '/login'}>🔐 Sign In</a>
+		<a href="/register" class:active={$page.url.pathname === '/register'}>📝 Register</a>
 	  {/if}
 	</div>
   </nav>
@@ -76,13 +82,18 @@
 	  display: flex;
 	  gap: 1rem;
 	  align-items: center;
+	  flex-wrap: wrap;
 	}
 	
 	.user-info {
 	  color: white;
 	  font-size: 0.875rem;
-	  margin-right: 0.5rem;
+	  margin: 0 0.5rem;
 	  font-weight: 500;
+	  background: rgba(255, 255, 255, 0.1);
+	  padding: 0.25rem 0.75rem;
+	  border-radius: 12px;
+	  border: 1px solid rgba(255, 255, 255, 0.2);
 	}
 	
 	.nav-links a, .logout-btn {
@@ -96,6 +107,7 @@
 	  font-size: 0.875rem;
 	  font-family: inherit;
 	  transition: all 0.2s;
+	  white-space: nowrap;
 	}
 	
 	.nav-links a:hover, .logout-btn:hover {
@@ -105,20 +117,22 @@
 	.nav-links a.active {
 	  background: rgba(255, 255, 255, 0.2);
 	  border-color: rgba(255, 255, 255, 0.3);
+	  font-weight: 600;
 	}
 	
 	.logout-btn {
 	  border: 1px solid rgba(255, 255, 255, 0.3);
 	  font-weight: 500;
+	  background: rgba(220, 38, 38, 0.2);
 	}
 	
 	.logout-btn:hover {
-	  background: rgba(255, 255, 255, 0.15);
+	  background: rgba(220, 38, 38, 0.3);
 	  border-color: rgba(255, 255, 255, 0.5);
 	}
 	
 	.logout-btn:active {
-	  background: rgba(255, 255, 255, 0.2);
+	  background: rgba(220, 38, 38, 0.4);
 	}
 	
 	main {
@@ -130,12 +144,19 @@
 	@media (max-width: 768px) {
 	  .navbar {
 		padding: 1rem;
-		flex-wrap: wrap;
+		flex-direction: column;
+		gap: 1rem;
+	  }
+	  
+	  .nav-brand {
+		align-self: flex-start;
 	  }
 	  
 	  .nav-links {
 		gap: 0.5rem;
 		flex-wrap: wrap;
+		justify-content: center;
+		width: 100%;
 	  }
 	  
 	  .nav-links a, .logout-btn {
@@ -145,12 +166,32 @@
 	  
 	  .user-info {
 		font-size: 0.75rem;
-		margin-right: 0.25rem;
+		margin: 0.25rem;
+		padding: 0.2rem 0.5rem;
 	  }
 	  
 	  main {
 		padding: 0 1rem;
 		margin: 1rem auto;
+	  }
+	}
+	
+	@media (max-width: 480px) {
+	  .nav-links {
+		flex-direction: column;
+		gap: 0.5rem;
+		width: 100%;
+	  }
+	  
+	  .nav-links a, .logout-btn {
+		width: 100%;
+		text-align: center;
+	  }
+	  
+	  .user-info {
+		order: -1;
+		width: fit-content;
+		align-self: center;
 	  }
 	}
   </style>

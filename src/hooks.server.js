@@ -19,11 +19,10 @@ export async function handle({ event, resolve }) {
           event.locals.user = {
             id: user.id,
             email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
+            display_name: user.display_name,
             role: user.role
           };
-          console.log('✅ Hook - User set in locals:', event.locals.user.email, event.locals.user.role);
+          console.log('✅ Hook - User set in locals:', event.locals.user.email, event.locals.user.role, event.locals.user.display_name);
         }
       } catch (error) {
         console.error('❌ Hook - Database error:', error);

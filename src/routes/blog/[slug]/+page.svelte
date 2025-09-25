@@ -1,5 +1,11 @@
 <script>
+    import ReportModal from '$lib/components/ReportModal.svelte';
+    
     export let data;
+    
+    // Report modal state
+    let showReportModal = false;
+    let reportPostData = {};
     
     function formatDate(date) {
       return new Date(date).toLocaleDateString('en-US', { 
@@ -7,6 +13,15 @@
         month: 'long', 
         day: 'numeric' 
       });
+    }
+    
+    function openReportModal() {
+      reportPostData = {
+        postId: data.post.id,
+        postTitle: data.post.title,
+        postUrl: window.location.href
+      };
+      showReportModal = true;
     }
   </script>
   
@@ -41,10 +56,24 @@
       </div>
       
       <footer class="post-footer">
-        <a href="/blog" class="back-link">← Back to Blog</a>
+        <div class="footer-content">
+          <a href="/blog" class="back-link">← Back to Blog</a>
+          <button class="report-link" on:click={openReportModal} title="Report content issue">
+            ⚠️ Report Issue
+          </button>
+        </div>
       </footer>
     </article>
   </div>
+  
+  <!-- Report Modal -->
+  <ReportModal 
+    isOpen={showReportModal}
+    postTitle={reportPostData.postTitle}
+    postUrl={reportPostData.postUrl}
+    postId={reportPostData.postId}
+    on:close={() => showReportModal = false}
+  />
   
   <style>
     .post-container {
@@ -189,10 +218,17 @@
     
     .post-footer {
       display: flex;
-      justify-content: flex-start;
+      justify-content: space-between;
       align-items: center;
       padding-top: 2rem;
       border-top: 1px solid #e5e7eb;
+    }
+    
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
     }
     
     .back-link {
@@ -207,6 +243,23 @@
     .back-link:hover {
       background: #eff6ff;
       text-decoration: none;
+    }
+    
+    .report-link {
+      background: none;
+      border: 1px solid #d1d5db;
+      color: #6b7280;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .report-link:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
     }
     
     @media (max-width: 768px) {
@@ -229,6 +282,17 @@
       
       .post-content {
         font-size: 1rem;
+      }
+      
+      .footer-content {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+      }
+      
+      .back-link, .report-link {
+        text-align: center;
+        justify-content: center;
       }
     }
   </style>
