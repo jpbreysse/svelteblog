@@ -1,15 +1,15 @@
 <script>
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
-
+	
 	export let form;
 	export let data;
-
-	// Redirect if already logged in
+	
+	// Redirect if already logged in  
 	if (data.user) {
 		goto('/');
 	}
-
+	
 	let loading = false;
 </script>
 
@@ -21,27 +21,21 @@
 	<div class="register-card">
 		<h1>Create Account</h1>
 		<p>
-		Please fill out the form below. Your account will need admin approval before you can log in.
+			Please fill out the form below. Your account will need admin approval before you can log in.
 		</p>
-    
-    {#if form?.error}
-      <div class="error-banner">
-        ❌ {form.error}
-      </div>
-    {/if}
-    
-    {#if form?.success}
-      <div class="success-banner">
-        ✅ {form.success}
-      </div>
-    {/if}
-    
-    {#if form?.errors?.general}
-      <div class="error-banner">
-        ❌ {form.errors.general}
-      </div>
-    {/if}
-
+		
+		{#if form?.error}
+			<div class="error-banner">
+				❌ {form.error}
+			</div>
+		{/if}
+		
+		{#if form?.success}
+			<div class="success-banner">
+				✅ {form.success}
+			</div>
+		{/if}
+		
 		<form
 			method="POST"
 			use:enhance={() => {
@@ -63,7 +57,7 @@
 					<span class="error-message">{form.errors.email}</span>
 				{/if}
 			</div>
-
+			
 			<div class="form-group">
 				<label for="display_name">Display Name</label>
 				<input
@@ -144,32 +138,32 @@
 	}
 
 	p {
-	text-align: center;
-	color: #6b7280;
-	margin-bottom: 2rem;
+		text-align: center;
+		color: #6b7280;
+		margin-bottom: 2rem;
 	}
   
-  .error-banner {
-    background: #fee2e2;
-    color: #991b1b;
-    padding: 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
-    text-align: center;
-    font-size: 0.875rem;
-    border: 1px solid #fca5a5;
-  }
+	.error-banner {
+		background: #fee2e2;
+		color: #991b1b;
+		padding: 0.75rem;
+		border-radius: 4px;
+		margin-bottom: 1.5rem;
+		text-align: center;
+		font-size: 0.875rem;
+		border: 1px solid #fca5a5;
+	}
   
-  .success-banner {
-    background: #d1fae5;
-    color: #065f46;
-    padding: 0.75rem;
-    border-radius: 4px;
-    margin-bottom: 1.5rem;
-    text-align: center;
-    font-size: 0.875rem;
-    border: 1px solid #a7f3d0;
-  }
+	.success-banner {
+		background: #d1fae5;
+		color: #065f46;
+		padding: 0.75rem;
+		border-radius: 4px;
+		margin-bottom: 1.5rem;
+		text-align: center;
+		font-size: 0.875rem;
+		border: 1px solid #a7f3d0;
+	}
 
 	.form-group {
 		margin-bottom: 1.5rem;

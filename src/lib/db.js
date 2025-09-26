@@ -10,62 +10,27 @@ db.pragma('journal_mode = WAL');
 
 // Initialize USER tables (updated with display_name)
 try {
+  console.log('🔄 Checking database schema...');
+  
   // Check if we need to migrate from first_name/last_name to display_name
   const tableInfo = db.prepare("PRAGMA table_info(users)").all();
+  console.log('📊 Current table columns:', tableInfo.map(col => col.name));
+  
   const hasDisplayName = tableInfo.some(col => col.name === 'display_name');
   const hasFirstName = tableInfo.some(col => col.name === 'first_name');
   
-  if (!hasDisplayName && hasFirstName) {
-    console.log('🔄 Migrating from first_name/last_name to display_name...');
-    
-    // Add display_name column
-    db.exec(`ALTER TABLE users ADD COLUMN display_name TEXT`);
-    
-    // Migrate existing data
-    const users = db.prepare('SELECT id, first_name, last_name FROM users').all();
-    const updateStmt = db.prepare('UPDATE users SET display_name = ? WHERE id = ?');
-    
-    for (const user of users) {
-      const displayName = `${user.first_name} ${user.last_name}`.trim();
-      updateStmt.run(displayName, user.id);
-    }
-    
-    // Create new table with correct schema
-    db.exec(`
-      CREATE TABLE users_new (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        display_name TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'deletion_requested')),
-        role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        approved_at DATETIME,
-        approved_by INTEGER,
-        deletion_requested_at DATETIME,
-        deletion_reason TEXT,
-        FOREIGN KEY (approved_by) REFERENCES users_new(id)
-      )
-    `);
-    
-    // Copy data
-    db.exec(`
-      INSERT INTO users_new (
-        id, email, display_name, password_hash, status, role, 
-        created_at, approved_at, approved_by, deletion_requested_at, deletion_reason
-      )
-      SELECT 
-        id, email, display_name, password_hash, status, role,
-        created_at, approved_at, approved_by, deletion_requested_at, deletion_reason
-      FROM users
-    `);
-    
-    // Replace table
-    db.exec('DROP TABLE users');
-    db.exec('ALTER TABLE users_new RENAME TO users');
-    
-    console.log('✅ Migration to display_name completed!');
-  } else if (!hasDisplayName) {
+  console.log('📊 Schema check results:');
+  console.log('  - Has display_name:', hasDisplayName);
+  console.log('  - Has first_name:', hasFirstName);
+  
+  if (hasDisplayName && hasFirstName) {
+    console.log('⚠️ OLD COLUMNS DETECTED!');
+    console.log('📝 To fix the registration issue, run: node cleanup-db.js');
+    console.log('📝 This will clean up the database schema.');
+  } else if (hasDisplayName) {
+    console.log('✅ Database schema is clean and ready');
+  } else {
+    console.log('🔄 Creating fresh users table with display_name...');
     // Create fresh table with display_name
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
@@ -79,12 +44,11 @@ try {
         approved_at DATETIME,
         approved_by INTEGER,
         deletion_requested_at DATETIME,
-        deletion_reason TEXT,
-        FOREIGN KEY (approved_by) REFERENCES users(id)
+        deletion_reason TEXT
       )
     `);
   }
-
+  
   console.log('✅ User tables initialized successfully');
 } catch (error) {
   console.error('❌ Error creating user tables:', error);
