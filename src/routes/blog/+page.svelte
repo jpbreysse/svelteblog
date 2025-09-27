@@ -389,16 +389,19 @@
           </div>
           
           <div class="meta-row">
-            <select bind:value={editingPost.category} class="category-select" disabled={loading}>
-              <option value="thoughts">Thoughts</option>
-              <option value="reflections">Reflections</option>
-              <option value="lifestyle">Lifestyle</option>
-              <option value="creative">Creative</option>
-              <option value="personal">Personal</option>
-              <option value="tech">Technology</option>
-              <option value="tutorial">Tutorial</option>
-              <option value="politics">Politics</option>
-            </select>
+            <div class="input-group">
+              <select bind:value={editingPost.category} class="category-select" disabled={loading}>
+                <option value="thoughts">Thoughts</option>
+                <option value="reflections">Reflections</option>
+                <option value="lifestyle">Lifestyle</option>
+                <option value="creative">Creative</option>
+                <option value="personal">Personal</option>
+                <option value="tech">Technology</option>
+                <option value="tutorial">Tutorial</option>
+                <option value="politics">Politics</option>
+              </select>
+              <div class="category-label">Category</div>
+            </div>
             
             <div class="input-group">
               <input 
@@ -919,9 +922,17 @@
     }
     
     .meta-row {
-      display: grid;
-      grid-template-columns: 200px 1fr;
+      display: flex;
       gap: 1rem;
+      align-items: flex-start;
+    }
+    
+    .meta-row .input-group {
+      flex: 1;
+    }
+    
+    .meta-row .input-group:first-child {
+      flex: 0 0 200px;
     }
     
     .category-select, .tags-input {
@@ -930,6 +941,20 @@
       border-radius: 6px;
       font-size: 1rem;
       transition: border-color 0.2s;
+      width: 100%;
+      box-sizing: border-box;
+      height: 48px;
+      display: flex;
+      align-items: center;
+    }
+    
+    .category-label, .tag-counter {
+      font-size: 0.75rem;
+      color: #6b7280;
+      margin-top: 0.25rem;
+      display: block;
+      min-height: 16px;
+      line-height: 16px;
     }
     
     .tags-input.error {

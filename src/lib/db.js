@@ -422,7 +422,7 @@ export const blogDB = {
   // Search posts
   searchPosts(query, category = null) {
     let sql = `
-      SELECT 
+      SELECT DISTINCT
         p.*,
         u.display_name,
         GROUP_CONCAT(t.name) as tags
@@ -431,10 +431,10 @@ export const blogDB = {
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
       WHERE p.published = 1
-        AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ?)
+        AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?)
     `;
 
-    const params = [`%${query}%`, `%${query}%`, `%${query}%`];
+    const params = [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`];
 
     if (category) {
       sql += ' AND p.category = ?';

@@ -137,19 +137,21 @@ export const actions = {
       
       const result = insertStatement.run(email.trim().toLowerCase(), displayName.trim(), hashedPassword);
       console.log('✅ Database insert successful, new user ID:', result.lastInsertRowid);
+      console.log('✅ Redirecting to success page...');
       
       throw redirect(303, '/register/success');
       
     } catch (error) {
-      console.error('💥 Registration error in production:');
+      // Handle redirect separately from actual errors
+      if (error.status === 303) {
+        console.log('✅ Successful redirect to success page');
+        throw error;
+      }
+      
+      console.error('💥 Actual registration error:');
       console.error('💥 Error type:', error.constructor.name);
       console.error('💥 Error message:', error.message);
       console.error('💥 Error stack:', error.stack);
-      
-      if (error.status === 303) {
-        console.log('✅ Redirect - re-throwing');
-        throw error;
-      }
       
       return fail(500, {
         errors: { general: `Server error: ${error.message}` }

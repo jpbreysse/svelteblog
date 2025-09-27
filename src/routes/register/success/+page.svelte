@@ -2,14 +2,14 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 
-	let countdown = 5;
+	let countdown = 10;
 
 	onMount(() => {
 		const interval = setInterval(() => {
 			countdown--;
 			if (countdown === 0) {
 				clearInterval(interval);
-				goto('/login');
+				goto('/blog');
 			}
 		}, 1000);
 
@@ -58,8 +58,8 @@
 		</div>
 
 		<div class="action-buttons">
-			<a href="/login" class="primary-btn">
-				Go to Login ({countdown}s)
+			<a href="/blog" class="primary-btn">
+				Explore Blog ({countdown}s)
 			</a>
 			<a href="/" class="secondary-btn">
 				Return to Home
