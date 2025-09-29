@@ -310,9 +310,17 @@ export const blogDB = {
       throw new Error('Title and content are required');
     }
 
+    // Verify author exists
+    const author = db.prepare('SELECT id FROM users WHERE id = ?').get(authorId);
+    if (!author) {
+      throw new Error(`User with ID ${authorId} does not exist`);
+    }
+
     const slug = generateSlug(title);
     const excerpt = generateExcerpt(content);
     const readTime = calculateReadTime(content);
+
+    console.log(`📝 Creating post with slug: "${slug}" for user: ${authorId}`);
 
     // Start transaction
     const transaction = db.transaction(() => {
@@ -323,17 +331,24 @@ export const blogDB = {
       `).run(title, content, excerpt, category, slug, readTime, authorId);
 
       const postId = result.lastInsertRowid;
+      console.log(`✅ Post inserted with ID: ${postId}`);
 
       // Handle tags
       if (tags.length > 0) {
+        console.log(`🏷️  Adding ${tags.length} tags to post ${postId}`);
         this.updatePostTags(postId, tags);
       }
 
       return postId;
     });
 
-    const postId = transaction();
-    return this.getPostById(postId);
+    try {
+      const postId = transaction();
+      return this.getPostById(postId);
+    } catch (error) {
+      console.error(`❌ Transaction failed:`, error.message);
+      throw error;
+    }
   },
 
   // Update existing post
@@ -399,6 +414,7 @@ export const blogDB = {
 
   // Update post tags
   updatePostTags(postId, tagNames) {
+    // Delete existing tags
     db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId);
 
     if (tagNames.length === 0) return;
@@ -411,10 +427,31 @@ export const blogDB = {
       const cleanTag = tagName.trim().toLowerCase();
       if (!cleanTag) continue;
 
-      insertTag.run(cleanTag);
-      const tag = getTagId.get(cleanTag);
-      if (tag) {
+      try {
+        // Insert tag if it doesn't exist
+        insertTag.run(cleanTag);
+        
+        // Get the tag ID
+        const tag = getTagId.get(cleanTag);
+        
+        if (!tag || !tag.id) {
+          console.error(`❌ Failed to get tag ID for: ${cleanTag}`);
+          continue;
+        }
+        
+        // Verify postId is valid
+        const postExists = db.prepare('SELECT id FROM posts WHERE id = ?').get(postId);
+        if (!postExists) {
+          throw new Error(`Post ID ${postId} does not exist`);
+        }
+        
+        // Link post to tag
         linkPostTag.run(postId, tag.id);
+        console.log(`✅ Linked tag "${cleanTag}" (ID: ${tag.id}) to post ${postId}`);
+        
+      } catch (tagError) {
+        console.error(`❌ Error processing tag "${cleanTag}":`, tagError.message);
+        throw new Error(`Failed to add tag "${cleanTag}": ${tagError.message}`);
       }
     }
   },
