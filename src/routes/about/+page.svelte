@@ -13,22 +13,22 @@
   <div class="about-section intro-section">
     <h2>📖 Notre Mission</h2>
     <p class="intro-text">
-      Ce blog est un collectif pour ceux qui souhaitent écrire sur ce qu'est la démocratie et de tous ce qui nous lie à ce monde.
+      Ce blog est un collectif pour ceux qui souhaitent écrire sur ce qu'est la démocratie et sur tout ce qui nous lie à ce monde.
     </p>
     
     <h3>Règles de fonctionnement :</h3>
     <ol class="rules-list">
       <li>Il s'appuie sur des membres fondateurs qui valident le fonctionnement éditorial du blog.</li>
-      <li>L'inscription est libre si l'on se trouve proche de la vallée verte et si l'on s'intéresse à l'avenir de la démocratie et à notre monde pour vouloir en parler.</li>
+      <li>L'inscription est libre si l'on se trouve proche de la Vallée Verte et si l'on s'intéresse à l'avenir de la démocratie et à notre monde pour vouloir en parler.</li>
       <li>La création du compte nécessite l'accord de l'association pour des raisons de sécurité.</li>
       <li>Lors de l'inscription, une adresse email et un alias sont requis. Ils servent pour se connecter et pour publier. Nous préservons un anonymat complet.</li>
-      <li>L'alias correspond au nom qui sera publié lors de la création d'articles (post)</li>
+      <li>L'alias correspond au nom qui sera publié lors de la création d'articles (posts)</li>
       <li>Aucune autre donnée personnelle n'est collectée, garantissant ainsi la protection totale de l'identité des utilisateurs.</li>
-      <li>Les mots de passe des utilisateurs ne sont pas accessibles à l'Administrateur.</li>
-      <li>Chaque membre pourra détruire son compte, ses articles à tout moment (RGPD)</li>
+      <li>Les mots de passe des utilisateurs ne sont pas accessibles à l'administrateur.</li>
+      <li>Chaque membre pourra détruire son compte et ses articles à tout moment (RGPD)</li>
       <li>Il est possible de signaler un article (RGPD) à l'Administrateur du site</li>
       <li>La publication des membres est libre.</li>
-      <li>Chaque membre doit garder en mémoire les lois de la république.</li>
+      <li>Chaque membre doit garder en mémoire les lois de la République.</li>
       <li>L'association qui gère ce blog peut décider de supprimer un compte ou un post s'il est contraire au fonctionnement de l'association.</li>
       <li>Le collectif a développé la solution, ce qui lui permet de faire évoluer le site selon les besoins de la communauté.</li>
       <li>Des cookies sont utilisés pour gérer l'authentification. Ils ne sont pas utilisés autrement. Nous ne gardons pas trace des connexions.</li>
