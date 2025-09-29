@@ -9,6 +9,33 @@
 <div class="about-container">
   <h1>About {PUBLIC_APP_NAME}</h1>
   
+  <!-- French Introduction Section -->
+  <div class="about-section intro-section">
+    <h2>📖 Notre Mission</h2>
+    <p class="intro-text">
+      Ce blog est un collectif pour ceux qui souhaitent écrire sur ce qu'est la démocratie et de tous ce qui nous lie à ce monde.
+    </p>
+    
+    <h3>Règles de fonctionnement :</h3>
+    <ol class="rules-list">
+      <li>Il s'appuie sur des membres fondateurs qui valident le fonctionnement éditorial du blog.</li>
+      <li>L'inscription est libre si l'on se trouve proche de la vallée verte et si l'on s'intéresse à l'avenir de la démocratie et à notre monde pour vouloir en parler.</li>
+      <li>La création du compte nécessite l'accord de l'association pour des raisons de sécurité.</li>
+      <li>Lors de l'inscription, une adresse email et un alias sont requis. Ils servent pour se connecter et pour publier. Nous préservons un anonymat complet.</li>
+      <li>L'alias correspond au nom qui sera publié lors de la création d'articles (post)</li>
+      <li>Aucune autre donnée personnelle n'est collectée, garantissant ainsi la protection totale de l'identité des utilisateurs.</li>
+      <li>Les mots de passe des utilisateurs ne sont pas accessibles à l'Administrateur.</li>
+      <li>Chaque membre pourra détruire son compte, ses articles à tout moment (RGPD)</li>
+      <li>Il est possible de signaler un article (RGPD) à l'Administrateur du site</li>
+      <li>La publication des membres est libre.</li>
+      <li>Chaque membre doit garder en mémoire les lois de la république.</li>
+      <li>L'association qui gère ce blog peut décider de supprimer un compte ou un post s'il est contraire au fonctionnement de l'association.</li>
+      <li>Le collectif a développé la solution, ce qui lui permet de faire évoluer le site selon les besoins de la communauté.</li>
+      <li>Des cookies sont utilisés pour gérer l'authentification. Ils ne sont pas utilisés autrement. Nous ne gardons pas trace des connexions.</li>
+      <li>Le site est hébergé en France via Scalingo (Outscale).</li>
+    </ol>
+  </div>
+  
   <div class="about-section">
     <h2>🚀 Welcome to Our Platform</h2>
     <p>
@@ -305,6 +332,36 @@
   }
 
   .contact-info p:last-child {
+    margin-bottom: 0;
+  }
+
+  /* French Introduction Section Styling */
+  .intro-section {
+    border-left: 4px solid #2563eb;
+  }
+
+  .intro-text {
+    font-size: 1.15rem;
+    font-weight: 500;
+    color: #1f2937;
+    line-height: 1.7;
+    margin-bottom: 2rem;
+  }
+
+  .rules-list {
+    list-style: decimal;
+    padding-left: 1.5rem;
+    margin: 1rem 0;
+  }
+
+  .rules-list li {
+    color: #4b5563;
+    margin-bottom: 0.75rem;
+    line-height: 1.6;
+    font-size: 1rem;
+  }
+
+  .rules-list li:last-child {
     margin-bottom: 0;
   }
 
