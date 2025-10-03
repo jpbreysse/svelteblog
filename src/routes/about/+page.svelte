@@ -19,7 +19,6 @@
     <h3>Règles de fonctionnement :</h3>
     <ol class="rules-list">
       <li>Il s'appuie sur des membres fondateurs qui valident le fonctionnement éditorial du blog.</li>
-      <li>L'inscription est libre si l'on se trouve proche de la Vallée Verte et si l'on s'intéresse à l'avenir de la démocratie et à notre monde pour vouloir en parler.</li>
       <li>La création du compte nécessite l'accord de l'association pour des raisons de sécurité.</li>
       <li>Lors de l'inscription, une adresse email et un alias sont requis. Ils servent pour se connecter et pour publier. Nous préservons un anonymat complet.</li>
       <li>L'alias correspond au nom qui sera publié lors de la création d'articles (posts)</li>

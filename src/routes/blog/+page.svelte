@@ -5,6 +5,7 @@
     import { invalidateAll, invalidate } from '$app/navigation';
     import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     import ReportModal from '$lib/components/ReportModal.svelte';
+    import { getCategories, getDefaultCategory } from '$lib/categories';
     
     export let data;
     
@@ -14,6 +15,10 @@
     $: stats = data.stats || { posts: 0, categories: 0, tags: 0 };
     $: searchQuery = data.searchQuery || '';
     $: selectedCategory = data.categoryFilter || 'all';
+    
+    // Get available categories from environment
+    const availableCategories = getCategories();
+    const defaultCategory = getDefaultCategory();
     
     // Debug reactive updates
     $: console.log('🔄 Posts updated, count:', posts.length);
@@ -282,7 +287,7 @@
         id: null,
         title: '',
         content: '',
-        category: 'thoughts',
+        category: defaultCategory,
         tags: []
       };
       showEditor = true;
@@ -391,14 +396,9 @@
           <div class="meta-row">
             <div class="input-group">
               <select bind:value={editingPost.category} class="category-select" disabled={loading}>
-                <option value="thoughts">Thoughts</option>
-                <option value="reflections">Reflections</option>
-                <option value="lifestyle">Lifestyle</option>
-                <option value="creative">Creative</option>
-                <option value="personal">Personal</option>
-                <option value="tech">Technology</option>
-                <option value="tutorial">Tutorial</option>
-                <option value="politics">Politics</option>
+                {#each availableCategories as category}
+                  <option value={category.value}>{category.label}</option>
+                {/each}
               </select>
               <div class="category-label">Category</div>
             </div>

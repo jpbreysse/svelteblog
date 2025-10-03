@@ -1,6 +1,15 @@
 import { json } from '@sveltejs/kit';
 import { userDB } from '$lib/db.js';
 
+// Generate a temporary password like "user123"
+function generateTempPassword(userName) {
+  // Get first part of display name or email, clean it
+  const baseName = userName.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 6) || 'user';
+  // Add random 3-digit number
+  const randomNum = Math.floor(100 + Math.random() * 900);
+  return `${baseName}${randomNum}`;
+}
+
 export async function POST({ request, locals }) {
   try {
     // Check if user is authenticated and is admin
@@ -11,30 +20,39 @@ export async function POST({ request, locals }) {
       }, { status: 403 });
     }
 
-    const { userId, newPassword } = await request.json();
+    const { userId } = await request.json();
 
     // Validate input
-    if (!userId || !newPassword) {
+    if (!userId) {
       return json({ 
         success: false, 
-        error: 'User ID and new password are required' 
+        error: 'User ID is required' 
       }, { status: 400 });
     }
 
-    // Validate new password strength
-    if (newPassword.length < 8) {
+    // Get user info to generate password
+    const { userDB: db } = await import('$lib/db.js');
+    const user = db.getUserById(userId);
+    
+    if (!user) {
       return json({ 
         success: false, 
-        error: 'New password must be at least 8 characters long' 
-      }, { status: 400 });
+        error: 'User not found' 
+      }, { status: 404 });
     }
+
+    // Generate temporary password
+    const tempPassword = generateTempPassword(user.display_name);
 
     // Reset the password
-    const result = await userDB.resetUserPassword(locals.user.id, userId, newPassword);
+    const result = await userDB.resetUserPassword(locals.user.id, userId, tempPassword);
 
     return json({
       success: true,
-      message: 'Password reset successfully!'
+      message: 'Password reset successfully!',
+      tempPassword: tempPassword,
+      userEmail: result.userEmail,
+      displayName: result.displayName
     });
 
   } catch (error) {

@@ -701,5 +701,40 @@ export const userDB = {
     }
 
     return { success: true };
+  },
+
+  // Reset user password (admin function)
+  async resetUserPassword(adminId, userId, newPassword) {
+    // Verify admin exists and has admin role
+    const admin = db.prepare('SELECT role FROM users WHERE id = ?').get(adminId);
+    if (!admin || admin.role !== 'admin') {
+      throw new Error('Only administrators can reset passwords');
+    }
+
+    // Verify target user exists
+    const user = db.prepare('SELECT id, email, display_name FROM users WHERE id = ?').get(userId);
+    if (!user) {
+      throw new Error('User not found');
+    }
+
+    // Hash the new password
+    const newPasswordHash = await bcrypt.hash(newPassword, 10);
+
+    // Update the password
+    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
+
+    if (result.changes === 0) {
+      throw new Error('Failed to update password');
+    }
+
+    console.log(`🔑 Admin (ID: ${adminId}) reset password for user: ${user.email} (${user.display_name})`);
+
+    return { 
+      success: true, 
+      message: 'Password reset successfully',
+      userId: user.id,
+      userEmail: user.email,
+      displayName: user.display_name
+    };
   }
 };
