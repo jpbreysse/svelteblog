@@ -15,6 +15,12 @@
     $: stats = data.stats || { posts: 0, categories: 0, tags: 0 };
     $: searchQuery = data.searchQuery || '';
     $: selectedCategory = data.categoryFilter || 'all';
+    $: paths = data.paths || [];
+    
+    // Handle edit post from URL parameter
+    $: if (data.editPost && !showEditor) {
+      editPost(data.editPost);
+    }
     
     // Get available categories from environment
     const availableCategories = getCategories();
@@ -164,7 +170,8 @@
           title: editingPost.title,
           content: editingPost.content,
           category: editingPost.category,
-          tags: editingPost.tags || []
+          tags: editingPost.tags || [],
+          path_id: editingPost.path_id || 1
         };
         
         let response;
@@ -188,7 +195,6 @@
         
         if (result.success) {
           console.log('✅ Post saved successfully:', result);
-          alert('✅ Post saved successfully!');
           showEditor = false;
           editingPost = null;
           quill = null;
@@ -196,6 +202,8 @@
           console.log('🔄 Invalidating data...');
           await invalidateAll();
           console.log('✅ Data invalidated, posts should refresh');
+          // Redirect to explorer
+          goto('/explorer');
         } else {
           alert(`❌ Error saving post: ${result.error}`);
         }
@@ -288,7 +296,8 @@
         title: '',
         content: '',
         category: defaultCategory,
-        tags: []
+        tags: [],
+        path_id: 1  // Default to root folder
       };
       showEditor = true;
       setTimeout(initEditor, 100);
@@ -345,6 +354,15 @@
     
     function canEditPost(post) {
       return data.user && (post.author_id === data.user.id || data.user.role === 'admin');
+    }
+    
+    // Format path for display with hierarchy
+    function formatPathDisplay(path) {
+      if (!path) return '📁 Root';
+      
+      // Show indentation for nested paths
+      const indent = path.level > 1 ? '—'.repeat(path.level - 1) + ' ' : '';
+      return `${indent}📁 ${path.name}`;
     }
     
     // Report modal functions
@@ -416,6 +434,17 @@
                 {editingPost.tags ? editingPost.tags.length : 0}/{VALIDATION_LIMITS.tags.max} tags
               </div>
             </div>
+          </div>
+          
+          <div class="input-group">
+            <select bind:value={editingPost.path_id} class="path-select" disabled={loading}>
+              {#each paths as path}
+                <option value={path.id}>
+                  📁 {path.full_path || path.name}
+                </option>
+              {/each}
+            </select>
+            <div class="path-label">Folder</div>
           </div>
         </div>
         
@@ -809,6 +838,47 @@
       margin-bottom: 1rem;
     }
     
+    /* Ensure lists display in post excerpts - handle Quill's data-list attributes */
+    .post-excerpt :global(ul),
+    .post-excerpt :global(ol) {
+      padding-left: 1.5em;
+      margin: 0.5rem 0;
+      list-style-type: none;
+    }
+    
+    .post-excerpt :global(li) {
+      list-style-type: none;
+      display: list-item;
+      position: relative;
+      padding-left: 1.5em;
+    }
+    
+    /* Bullet lists */
+    .post-excerpt :global(li[data-list="bullet"]::before) {
+      content: '\2022';
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
+    /* Numbered lists */
+    .post-excerpt :global(ol) {
+      counter-reset: list-0 list-1 list-2 list-3 list-4 list-5;
+    }
+    
+    .post-excerpt :global(li[data-list="ordered"]) {
+      counter-increment: list-0;
+    }
+    
+    .post-excerpt :global(li[data-list="ordered"]::before) {
+      content: counter(list-0, decimal) ".";
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
     .post-tags {
       display: flex;
       gap: 0.5rem;
@@ -935,7 +1005,7 @@
       flex: 0 0 200px;
     }
     
-    .category-select, .tags-input {
+    .category-select, .tags-input, .path-select {
       padding: 0.75rem;
       border: 1px solid #d1d5db;
       border-radius: 6px;
@@ -948,7 +1018,7 @@
       align-items: center;
     }
     
-    .category-label, .tag-counter {
+    .category-label, .tag-counter, .path-label {
       font-size: 0.75rem;
       color: #6b7280;
       margin-top: 0.25rem;
@@ -1010,6 +1080,54 @@
       min-height: 300px;
       border: 1px solid #d1d5db;
       border-radius: 8px;
+    }
+    
+    /* Quill list styles - Quill uses data-list attributes */
+    .quill-editor-container :global(.ql-editor ol),
+    .quill-editor-container :global(.ql-editor ul) {
+      padding-left: 1.5em;
+      list-style-type: none;
+    }
+    
+    .quill-editor-container :global(.ql-editor li) {
+      list-style-type: none;
+      position: relative;
+      padding-left: 1.5em;
+    }
+    
+    /* Bullet lists - Quill uses data-list="bullet" */
+    .quill-editor-container :global(.ql-editor li[data-list="bullet"]::before) {
+      content: '\2022';
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
+    /* Numbered lists - Quill uses data-list="ordered" with counters */
+    .quill-editor-container :global(.ql-editor ol) {
+      counter-reset: list-0 list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9;
+    }
+    
+    .quill-editor-container :global(.ql-editor li[data-list="ordered"]) {
+      counter-increment: list-0;
+    }
+    
+    .quill-editor-container :global(.ql-editor li[data-list="ordered"]::before) {
+      content: counter(list-0, decimal) ".";
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
+    /* Handle nested lists */
+    .quill-editor-container :global(.ql-editor li[data-list="ordered"].ql-indent-1) {
+      counter-increment: list-1;
+    }
+    
+    .quill-editor-container :global(.ql-editor li[data-list="ordered"].ql-indent-1::before) {
+      content: counter(list-1, decimal) ".";
     }
     
     .editor-footer {

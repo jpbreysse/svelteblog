@@ -4,6 +4,19 @@ export async function load({ url }) {
   try {
     console.log('🔍 Blog page loading...', new Date().toISOString());
     
+    // Check for edit parameter
+    const editPostId = url.searchParams.get('edit');
+    let editPost = null;
+    
+    if (editPostId) {
+      try {
+        editPost = blogDB.getPostById(parseInt(editPostId));
+        console.log('✏️ Loading post for editing:', editPostId, editPost ? 'found' : 'not found');
+      } catch (error) {
+        console.error('❌ Error loading post for editing:', error);
+      }
+    }
+    
     // First, let's check the database structure
     const tableInfo = db.prepare("PRAGMA table_info(users)").all();
     const hasDisplayName = tableInfo.some(col => col.name === 'display_name');
@@ -60,12 +73,30 @@ export async function load({ url }) {
     const categories = blogDB.getCategories();
     const stats = blogDB.getStats();
     
+    // Load paths for folder selection
+    const paths = db.prepare(`
+      SELECT id, name, parent_id, level, full_path
+      FROM paths 
+      ORDER BY full_path ASC
+    `).all();
+    
+    // Ensure root folder exists
+    if (!paths.find(p => p.id === 1)) {
+      db.prepare(`
+        INSERT INTO paths (id, name, parent_id, created_at) 
+        VALUES (1, 'Root', NULL, datetime('now'))
+      `).run();
+      paths.unshift({ id: 1, name: 'Root', parent_id: null });
+    }
+    
     return {
       posts,
       categories,
       stats,
+      paths,
       searchQuery,
-      categoryFilter
+      categoryFilter,
+      editPost
     };
   } catch (error) {
     console.error('❌ Error loading blog data:', error);
@@ -74,8 +105,10 @@ export async function load({ url }) {
       posts: [],
       categories: [],
       stats: { posts: 0, categories: 0, tags: 0 },
+      paths: [],
       searchQuery: '',
-      categoryFilter: ''
+      categoryFilter: '',
+      editPost: null
     };
   }
 }

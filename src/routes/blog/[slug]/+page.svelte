@@ -160,10 +160,40 @@
     .post-content :global(ol) {
       margin: 1rem 0;
       padding-left: 2rem;
+      list-style-type: none;
     }
     
     .post-content :global(li) {
+      list-style-type: none;
+      position: relative;
+      padding-left: 1.5em;
       margin: 0.5rem 0;
+    }
+    
+    /* Bullet lists - Quill uses data-list="bullet" */
+    .post-content :global(li[data-list="bullet"]::before) {
+      content: '\2022';
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
+    /* Numbered lists - Quill uses data-list="ordered" */
+    .post-content :global(ol) {
+      counter-reset: list-0 list-1 list-2 list-3 list-4 list-5;
+    }
+    
+    .post-content :global(li[data-list="ordered"]) {
+      counter-increment: list-0;
+    }
+    
+    .post-content :global(li[data-list="ordered"]::before) {
+      content: counter(list-0, decimal) ".";
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
     }
     
     .post-content :global(blockquote) {

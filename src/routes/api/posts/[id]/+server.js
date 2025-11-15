@@ -123,6 +123,69 @@ export async function PUT({ params, request, locals }) {
   }
 }
 
+// PATCH /api/posts/[id] - Partially update post (e.g., move to folder)
+export async function PATCH({ params, request, locals }) {
+  if (!locals.user) {
+    return json({
+      success: false,
+      error: 'Authentication required'
+    }, { status: 401 });
+  }
+
+  try {
+    const updates = await request.json();
+    const postId = parseInt(params.id);
+    
+    // Get the existing post
+    const existingPost = blogDB.getPostById(postId);
+    if (!existingPost) {
+      return json({
+        success: false,
+        error: 'Post not found'
+      }, { status: 404 });
+    }
+    
+    // Check authorization
+    if (existingPost.user_id !== locals.user.id && !locals.user.is_admin) {
+      return json({
+        success: false,
+        error: 'Unauthorized to modify this post'
+      }, { status: 403 });
+    }
+    
+    // Handle path_id update (moving post)
+    if ('path_id' in updates) {
+      const db = blogDB.db;
+      const stmt = db.prepare(`
+        UPDATE posts 
+        SET path_id = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+      `);
+      stmt.run(updates.path_id, postId);
+      
+      return json({
+        success: true,
+        message: 'Post moved successfully'
+      });
+    }
+    
+    // For other partial updates, use the regular update method
+    const post = blogDB.updatePost(postId, { ...existingPost, ...updates }, locals.user.id);
+    
+    return json({
+      success: true,
+      post,
+      message: 'Post updated successfully'
+    });
+  } catch (error) {
+    console.error('Error patching post:', error);
+    return json({
+      success: false,
+      error: error.message
+    }, { status: 500 });
+  }
+}
+
 // DELETE /api/posts/[id] - Delete post (authenticated users only)
 export async function DELETE({ params, locals }) {
   if (!locals.user) {

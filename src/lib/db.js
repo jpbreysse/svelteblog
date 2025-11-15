@@ -68,10 +68,12 @@ try {
       slug TEXT UNIQUE NOT NULL,
       read_time TEXT,
       author_id INTEGER NOT NULL,
+      path_id INTEGER DEFAULT 1,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       published BOOLEAN DEFAULT 1,
-      FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
+      FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (path_id) REFERENCES paths(id) ON DELETE SET NULL
     )
   `);
 
@@ -304,7 +306,7 @@ export const blogDB = {
 
   // Create new post
   createPost(postData, authorId) {
-    const { title, content, category = 'thoughts', tags = [] } = postData;
+    const { title, content, category = 'thoughts', tags = [], path_id = 1 } = postData;
 
     if (!title || !content) {
       throw new Error('Title and content are required');
@@ -320,15 +322,15 @@ export const blogDB = {
     const excerpt = generateExcerpt(content);
     const readTime = calculateReadTime(content);
 
-    console.log(`📝 Creating post with slug: "${slug}" for user: ${authorId}`);
+    console.log(`📝 Creating post with slug: "${slug}" for user: ${authorId} in folder: ${path_id}`);
 
     // Start transaction
     const transaction = db.transaction(() => {
       // Insert post
       const result = db.prepare(`
-        INSERT INTO posts (title, content, excerpt, category, slug, read_time, author_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(title, content, excerpt, category, slug, readTime, authorId);
+        INSERT INTO posts (title, content, excerpt, category, slug, read_time, author_id, path_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(title, content, excerpt, category, slug, readTime, authorId, path_id);
 
       const postId = result.lastInsertRowid;
       console.log(`✅ Post inserted with ID: ${postId}`);
@@ -353,7 +355,7 @@ export const blogDB = {
 
   // Update existing post
   updatePost(id, postData, authorId) {
-    const { title, content, category, tags = [] } = postData;
+    const { title, content, category, tags = [], path_id } = postData;
 
     // Check if user owns the post or is admin
     const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
@@ -373,13 +375,23 @@ export const blogDB = {
 
     // Start transaction
     const transaction = db.transaction(() => {
-      // Update post
+      // Build UPDATE query dynamically based on provided fields
+      let updateFields = ['title = ?', 'content = ?', 'excerpt = ?', 'category = ?', 'slug = ?', 'read_time = ?', 'updated_at = CURRENT_TIMESTAMP'];
+      let values = [title, content, excerpt, category, slug, readTime];
+      
+      // Add path_id if provided
+      if (path_id !== undefined) {
+        updateFields.push('path_id = ?');
+        values.push(path_id);
+      }
+      
+      values.push(id); // Add id for WHERE clause
+      
       const result = db.prepare(`
         UPDATE posts 
-        SET title = ?, content = ?, excerpt = ?, category = ?, slug = ?, 
-            read_time = ?, updated_at = CURRENT_TIMESTAMP
+        SET ${updateFields.join(', ')}
         WHERE id = ?
-      `).run(title, content, excerpt, category, slug, readTime, id);
+      `).run(...values);
 
       if (result.changes === 0) {
         throw new Error('Post not found');
@@ -738,3 +750,5 @@ export const userDB = {
     };
   }
 };
+export { pathsDB } from './paths.js';
+

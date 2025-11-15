@@ -1,16 +1,41 @@
 import { json } from '@sveltejs/kit';
-import { blogDB } from '$lib/db.js';
+import { blogDB, db } from '$lib/db.js';
 
-// GET /api/posts - Get all posts or search
+// GET /api/posts - Get all posts, search, or filter by path
 export async function GET({ url, locals }) {
   try {
     const searchQuery = url.searchParams.get('search');
     const category = url.searchParams.get('category');
     const userId = url.searchParams.get('user');
+    const pathId = url.searchParams.get('path_id');
 
     let posts;
     
-    if (userId && locals.user) {
+    // Priority order: path_id > userId > search > category > all
+    if (pathId) {
+      // Filter by path - use direct SQL query
+      posts = db.prepare(`
+        SELECT p.*, u.display_name,
+          GROUP_CONCAT(t.name) as tags
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        LEFT JOIN post_tags pt ON p.id = pt.post_id
+        LEFT JOIN tags t ON pt.tag_id = t.id
+        WHERE p.path_id = ? AND p.published = 1
+        GROUP BY p.id
+        ORDER BY p.created_at DESC
+      `).all(parseInt(pathId));
+      
+      // Transform to match blogDB format
+      posts = posts.map(post => ({
+        ...post,
+        author: post.display_name,
+        tags: post.tags ? post.tags.split(',') : [],
+        created_at: new Date(post.created_at),
+        updated_at: new Date(post.updated_at)
+      }));
+      
+    } else if (userId && locals.user) {
       // Get posts by specific user (only if authenticated)
       posts = blogDB.getPostsByUser(parseInt(userId));
     } else if (searchQuery) {
