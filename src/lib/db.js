@@ -1,183 +1,64 @@
-import Database from 'better-sqlite3';
-import { dev } from '$app/environment';
+import pg from 'pg';
+import dotenv from 'dotenv';
 import bcrypt from 'bcrypt';
 
-const db = new Database(dev ? 'dev.db' : 'prod.db');
+// Load environment variables
+dotenv.config();
 
-// Enable foreign keys and WAL mode for better performance
-db.pragma('foreign_keys = ON');
-db.pragma('journal_mode = WAL');
+const { Pool } = pg;
 
-// Initialize USER tables (updated with display_name)
-try {
-  console.log('🔄 Checking database schema...');
-  
-  // Check if we need to migrate from first_name/last_name to display_name
-  const tableInfo = db.prepare("PRAGMA table_info(users)").all();
-  console.log('📊 Current table columns:', tableInfo.map(col => col.name));
-  
-  const hasDisplayName = tableInfo.some(col => col.name === 'display_name');
-  const hasFirstName = tableInfo.some(col => col.name === 'first_name');
-  
-  console.log('📊 Schema check results:');
-  console.log('  - Has display_name:', hasDisplayName);
-  console.log('  - Has first_name:', hasFirstName);
-  
-  if (hasDisplayName && hasFirstName) {
-    console.log('⚠️ OLD COLUMNS DETECTED!');
-    console.log('📝 To fix the registration issue, run: node cleanup-db.js');
-    console.log('📝 This will clean up the database schema.');
-  } else if (hasDisplayName) {
-    console.log('✅ Database schema is clean and ready');
-  } else {
-    console.log('🔄 Creating fresh users table with display_name...');
-    // Create fresh table with display_name
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        email TEXT UNIQUE NOT NULL,
-        display_name TEXT NOT NULL,
-        password_hash TEXT NOT NULL,
-        status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected', 'deletion_requested')),
-        role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        approved_at DATETIME,
-        approved_by INTEGER,
-        deletion_requested_at DATETIME,
-        deletion_reason TEXT
-      )
-    `);
-  }
-  
-  console.log('✅ User tables initialized successfully');
-} catch (error) {
-  console.error('❌ Error creating user tables:', error);
-  throw error;
+// ============================================
+// PostgreSQL Connection Pool Setup
+// ============================================
+console.log('🔄 Initializing PostgreSQL connection pool...');
+
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL environment variable is not set. Check your .env file.');
 }
 
-// Initialize BLOG tables
-try {
-  // Posts table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      excerpt TEXT,
-      category TEXT NOT NULL DEFAULT 'thoughts',
-      slug TEXT UNIQUE NOT NULL,
-      read_time TEXT,
-      author_id INTEGER NOT NULL,
-      path_id INTEGER DEFAULT 1,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      published BOOLEAN DEFAULT 1,
-      FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE,
-      FOREIGN KEY (path_id) REFERENCES paths(id) ON DELETE SET NULL
-    )
-  `);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: parseInt(process.env.DATABASE_POOL_SIZE || '10'),
+  idleTimeoutMillis: parseInt(process.env.DATABASE_POOL_IDLE_TIMEOUT || '30000'),
+  connectionTimeoutMillis: 2000,
+});
 
-  // Tags table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+// Connection pool event handlers
+pool.on('error', (err) => {
+  console.error('❌ Unexpected error on idle client', err);
+  process.exit(-1);
+});
 
-  // Post-Tags junction table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS post_tags (
-      post_id INTEGER,
-      tag_id INTEGER,
-      PRIMARY KEY (post_id, tag_id),
-      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-      FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-    )
-  `);
+pool.on('connect', () => {
+  console.log('✅ PostgreSQL connection pool initialized');
+});
 
-  // Content Reports table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS content_reports (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      issue_type TEXT NOT NULL CHECK(issue_type IN (
-        'inappropriate', 'copyright', 'gdpr_removal', 'privacy', 
-        'spam', 'misinformation', 'harassment', 'other'
-      )),
-      description TEXT NOT NULL,
-      reporter_email TEXT,
-      post_id INTEGER,
-      post_title TEXT,
-      post_url TEXT,
-      reporter_ip TEXT,
-      user_agent TEXT,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'reviewed', 'resolved', 'dismissed')),
-      admin_response TEXT,
-      resolved_by INTEGER,
-      resolved_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE SET NULL,
-      FOREIGN KEY (resolved_by) REFERENCES users(id)
-    )
-  `);
+pool.on('remove', () => {
+  console.log('⚠️ Connection removed from pool');
+});
 
-  // Create indexes for better performance
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category);
-    CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published);
-    CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
-    CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
-    CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-    CREATE INDEX IF NOT EXISTS idx_reports_status ON content_reports(status);
-    CREATE INDEX IF NOT EXISTS idx_reports_type ON content_reports(issue_type);
-    CREATE INDEX IF NOT EXISTS idx_reports_created ON content_reports(created_at DESC);
-    CREATE UNIQUE INDEX IF NOT EXISTS idx_users_email ON users(email);
-    CREATE INDEX IF NOT EXISTS idx_users_display_name ON users(display_name);
-  `);
-
-  console.log('✅ Blog tables initialized successfully');
-} catch (error) {
-  console.error('❌ Error creating blog tables:', error);
-  throw error;
-}
-
-// Create default admin user
-async function createDefaultAdmin() {
+// Test connection on startup
+async function testConnection() {
   try {
-    const adminExists = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
-
-    if (!adminExists) {
-      console.log('📝 Creating default admin user...');
-
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-
-      const insertAdmin = db.prepare(`
-        INSERT INTO users (email, display_name, password_hash, status, role)
-        VALUES (?, ?, ?, ?, ?)
-      `);
-
-      const result = insertAdmin.run(
-        'admin@example.com',
-        'Admin User',
-        hashedPassword,
-        'approved',
-        'admin'
-      );
-
-      console.log('✅ Default admin user created with ID:', result.lastInsertRowid);
-    } else {
-      console.log('✅ Admin user already exists');
-    }
+    const result = await pool.query('SELECT NOW()');
+    console.log('✅ PostgreSQL connection successful!');
+    console.log(`   Current database time: ${result.rows[0].now}`);
   } catch (error) {
-    console.error('❌ Error creating admin user:', error);
-    throw error;
+    console.error('❌ Failed to connect to PostgreSQL:');
+    console.error(`   Error: ${error.message}`);
+    console.error('   Make sure:');
+    console.error('   1. PostgreSQL is running: docker-compose up -d');
+    console.error('   2. DATABASE_URL is set in .env');
+    console.error('   3. Credentials match docker-compose.yml');
+    process.exit(1);
   }
 }
 
-// Initialize admin user
-createDefaultAdmin().catch(console.error);
+// Test connection on startup
+testConnection().catch(console.error);
+
+// Export the pool for use in other files
+export { pool };
 
 // Helper functions
 function generateSlug(title) {
@@ -200,383 +81,399 @@ function generateExcerpt(content, length = 120) {
   return text.length > length ? text.substring(0, length) + '...' : text;
 }
 
-// BLOG database operations
+// ============================================
+// NOTE: All database methods below are STILL SYNCHRONOUS
+// They will be converted to ASYNC in Phases 2.2-2.4
+// ============================================
+
+// ============================================
+// BLOG Database Operations
+// Phase 2.3: All 13 methods converted to async ✅
+// ============================================
+
 export const blogDB = {
-  // Get all posts with author info
-  getAllPosts() {
-    const posts = db.prepare(`
+  /**
+   * Get all posts with author info
+   * @returns {Promise<Array>} All posts with author details
+   */
+  async getAllPosts() {
+    const result = await pool.query(`
       SELECT 
-        p.*,
-        u.display_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+        p.id, p.title, p.content, p.excerpt, p.category, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published,
+        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.published = 1
-      GROUP BY p.id
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      GROUP BY p.id, u.id, pa.id
       ORDER BY p.created_at DESC
-    `).all();
-
-    return posts.map(post => ({
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `);
+    return result.rows;
   },
 
-  // Get posts by user
-  getPostsByUser(userId) {
-    const posts = db.prepare(`
+  /**
+   * Get posts by user
+   * @param {number} userId - User ID
+   * @returns {Promise<Array>} Posts authored by user
+   */
+  async getPostsByUser(userId) {
+    const result = await pool.query(`
       SELECT 
-        p.*,
-        u.display_name,
-        GROUP_CONCAT(t.name) as tags
+        p.id, p.title, p.content, p.excerpt, p.category, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published,
+        u.id as author_id, u.display_name as author_name,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.author_id = ?
-      GROUP BY p.id
+      WHERE p.author_id = $1
+      GROUP BY p.id, u.id
       ORDER BY p.created_at DESC
-    `).all(userId);
-
-    return posts.map(post => ({
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `, [userId]);
+    return result.rows;
   },
 
-  // Get post by ID
-  getPostById(id) {
-    const post = db.prepare(`
+  /**
+   * Get post by ID
+   * @param {number} id - Post ID
+   * @returns {Promise<Object|null>} Post object or null
+   */
+  async getPostById(id) {
+    const result = await pool.query(`
       SELECT 
         p.*,
-        u.display_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.id = ? AND p.published = 1
-      GROUP BY p.id
-    `).get(id);
-
-    if (!post) return null;
-
-    return {
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    };
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.id = $1
+      GROUP BY p.id, u.id, pa.id
+    `, [id]);
+    return result.rows[0] || null;
   },
 
-  // Get post by slug
-  getPostBySlug(slug) {
-    const post = db.prepare(`
+  /**
+   * Get post by slug
+   * @param {string} slug - Post slug
+   * @returns {Promise<Object|null>} Post object or null
+   */
+  async getPostBySlug(slug) {
+    const result = await pool.query(`
       SELECT 
         p.*,
-        u.display_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.slug = ? AND p.published = 1
-      GROUP BY p.id
-    `).get(slug);
-
-    if (!post) return null;
-
-    return {
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    };
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.slug = $1 AND p.published = true
+      GROUP BY p.id, u.id, pa.id
+    `, [slug]);
+    return result.rows[0] || null;
   },
 
-  // Create new post
-  createPost(postData, authorId) {
-    const { title, content, category = 'thoughts', tags = [], path_id = 1 } = postData;
-
-    if (!title || !content) {
-      throw new Error('Title and content are required');
-    }
-
-    // Verify author exists
-    const author = db.prepare('SELECT id FROM users WHERE id = ?').get(authorId);
-    if (!author) {
-      throw new Error(`User with ID ${authorId} does not exist`);
-    }
-
+  /**
+   * Create new post
+   * @param {Object} postData - Post data (title, content, category, etc.)
+   * @param {number} authorId - Author user ID
+   * @returns {Promise<Object>} Created post with ID
+   */
+  async createPost(postData, authorId) {
+    const { title, content, category = 'thoughts', path_id = null } = postData;
+    
+    // Generate slug, read_time, and excerpt
     const slug = generateSlug(title);
+    const read_time = calculateReadTime(content);
     const excerpt = generateExcerpt(content);
-    const readTime = calculateReadTime(content);
 
-    console.log(`📝 Creating post with slug: "${slug}" for user: ${authorId} in folder: ${path_id}`);
+    const result = await pool.query(`
+      INSERT INTO posts (
+        title, content, excerpt, category, slug, read_time, 
+        author_id, path_id, published
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+      RETURNING id, title, slug, created_at
+    `, [title, content, excerpt, category, slug, read_time, authorId, path_id]);
 
-    // Start transaction
-    const transaction = db.transaction(() => {
-      // Insert post
-      const result = db.prepare(`
-        INSERT INTO posts (title, content, excerpt, category, slug, read_time, author_id, path_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(title, content, excerpt, category, slug, readTime, authorId, path_id);
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create post');
+    }
 
-      const postId = result.lastInsertRowid;
-      console.log(`✅ Post inserted with ID: ${postId}`);
+    return {
+      success: true,
+      post: result.rows[0]
+    };
+  },
 
-      // Handle tags
-      if (tags.length > 0) {
-        console.log(`🏷️  Adding ${tags.length} tags to post ${postId}`);
-        this.updatePostTags(postId, tags);
-      }
+  /**
+   * Update existing post
+   * @param {number} id - Post ID
+   * @param {Object} postData - Updated data
+   * @param {number} authorId - User ID (for authorization)
+   * @returns {Promise<Object>} Success message
+   */
+  async updatePost(id, postData, authorId) {
+    // Verify post belongs to author
+    const postResult = await pool.query(
+      'SELECT author_id FROM posts WHERE id = $1',
+      [id]
+    );
+    const post = postResult.rows[0];
 
-      return postId;
-    });
+    if (!post) {
+      throw new Error('Post not found');
+    }
 
+    if (post.author_id !== authorId) {
+      throw new Error('You can only edit your own posts');
+    }
+
+    // Update the post
+    const { title, content, category, path_id } = postData;
+    const read_time = calculateReadTime(content);
+    const excerpt = generateExcerpt(content);
+
+    const result = await pool.query(`
+      UPDATE posts 
+      SET title = $1, content = $2, excerpt = $3, category = $4, 
+          read_time = $5, path_id = $6, updated_at = NOW()
+      WHERE id = $7
+    `, [title, content, excerpt, category, read_time, path_id, id]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to update post');
+    }
+
+    return { success: true, message: 'Post updated successfully' };
+  },
+
+  /**
+   * Delete post
+   * @param {number} id - Post ID
+   * @param {number} authorId - User ID (for authorization)
+   * @returns {Promise<Object>} Success message
+   */
+  async deletePost(id, authorId) {
+    // Verify post belongs to author
+    const postResult = await pool.query(
+      'SELECT author_id FROM posts WHERE id = $1',
+      [id]
+    );
+    const post = postResult.rows[0];
+
+    if (!post) {
+      throw new Error('Post not found');
+    }
+
+    if (post.author_id !== authorId) {
+      throw new Error('You can only delete your own posts');
+    }
+
+    // Delete post (cascade will delete tags via foreign key)
+    const result = await pool.query(
+      'DELETE FROM posts WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to delete post');
+    }
+
+    return { success: true, message: 'Post deleted successfully' };
+  },
+
+  /**
+   * Update post tags
+   * @param {number} postId - Post ID
+   * @param {Array<string>} tagNames - Array of tag names
+   * @returns {Promise<Object>} Success message
+   */
+  async updatePostTags(postId, tagNames) {
+    const client = await pool.connect();
     try {
-      const postId = transaction();
-      return this.getPostById(postId);
+      await client.query('BEGIN');
+
+      // Delete existing tags for this post
+      await client.query('DELETE FROM post_tags WHERE post_id = $1', [postId]);
+
+      // For each tag, get or create it, then add to post
+      for (const tagName of tagNames) {
+        // Get or create tag
+        const tagResult = await client.query(`
+          INSERT INTO tags (name) VALUES ($1)
+          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+          RETURNING id
+        `, [tagName]);
+
+        const tagId = tagResult.rows[0].id;
+
+        // Add tag to post
+        await client.query(
+          'INSERT INTO post_tags (post_id, tag_id) VALUES ($1, $2)',
+          [postId, tagId]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      return {
+        success: true,
+        message: `Post tagged with ${tagNames.length} tags`
+      };
     } catch (error) {
-      console.error(`❌ Transaction failed:`, error.message);
+      await client.query('ROLLBACK');
       throw error;
+    } finally {
+      client.release();
     }
   },
 
-  // Update existing post
-  updatePost(id, postData, authorId) {
-    const { title, content, category, tags = [], path_id } = postData;
-
-    // Check if user owns the post or is admin
-    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
-    if (!post) {
-      throw new Error('Post not found');
-    }
-
-    // Only allow author or admin to edit
-    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
-    if (post.author_id !== authorId && user?.role !== 'admin') {
-      throw new Error('Unauthorized to edit this post');
-    }
-
-    const excerpt = generateExcerpt(content);
-    const readTime = calculateReadTime(content);
-    const slug = generateSlug(title);
-
-    // Start transaction
-    const transaction = db.transaction(() => {
-      // Build UPDATE query dynamically based on provided fields
-      let updateFields = ['title = ?', 'content = ?', 'excerpt = ?', 'category = ?', 'slug = ?', 'read_time = ?', 'updated_at = CURRENT_TIMESTAMP'];
-      let values = [title, content, excerpt, category, slug, readTime];
-      
-      // Add path_id if provided
-      if (path_id !== undefined) {
-        updateFields.push('path_id = ?');
-        values.push(path_id);
-      }
-      
-      values.push(id); // Add id for WHERE clause
-      
-      const result = db.prepare(`
-        UPDATE posts 
-        SET ${updateFields.join(', ')}
-        WHERE id = ?
-      `).run(...values);
-
-      if (result.changes === 0) {
-        throw new Error('Post not found');
-      }
-
-      // Update tags
-      this.updatePostTags(id, tags);
-
-      return id;
-    });
-
-    transaction();
-    return this.getPostById(id);
-  },
-
-  // Delete post
-  deletePost(id, authorId) {
-    // Check if user owns the post or is admin
-    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
-    if (!post) {
-      throw new Error('Post not found');
-    }
-
-    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
-    if (post.author_id !== authorId && user?.role !== 'admin') {
-      throw new Error('Unauthorized to delete this post');
-    }
-
-    const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id);
-    return result.changes > 0;
-  },
-
-  // Update post tags
-  updatePostTags(postId, tagNames) {
-    // Delete existing tags
-    db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId);
-
-    if (tagNames.length === 0) return;
-
-    const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
-    const getTagId = db.prepare('SELECT id FROM tags WHERE name = ?');
-    const linkPostTag = db.prepare('INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)');
-
-    for (const tagName of tagNames) {
-      const cleanTag = tagName.trim().toLowerCase();
-      if (!cleanTag) continue;
-
-      try {
-        // Insert tag if it doesn't exist
-        insertTag.run(cleanTag);
-        
-        // Get the tag ID
-        const tag = getTagId.get(cleanTag);
-        
-        if (!tag || !tag.id) {
-          console.error(`❌ Failed to get tag ID for: ${cleanTag}`);
-          continue;
-        }
-        
-        // Verify postId is valid
-        const postExists = db.prepare('SELECT id FROM posts WHERE id = ?').get(postId);
-        if (!postExists) {
-          throw new Error(`Post ID ${postId} does not exist`);
-        }
-        
-        // Link post to tag
-        linkPostTag.run(postId, tag.id);
-        console.log(`✅ Linked tag "${cleanTag}" (ID: ${tag.id}) to post ${postId}`);
-        
-      } catch (tagError) {
-        console.error(`❌ Error processing tag "${cleanTag}":`, tagError.message);
-        throw new Error(`Failed to add tag "${cleanTag}": ${tagError.message}`);
-      }
-    }
-  },
-
-  // Search posts
-  searchPosts(query, category = null) {
+  /**
+   * Search posts by title/content
+   * @param {string} query - Search query
+   * @param {string} category - Optional category filter
+   * @returns {Promise<Array>} Matching posts
+   */
+  async searchPosts(query, category = null) {
     let sql = `
-      SELECT DISTINCT
-        p.*,
-        u.display_name,
-        GROUP_CONCAT(t.name) as tags
+      SELECT 
+        p.id, p.title, p.excerpt, p.category, p.slug,
+        p.created_at, u.display_name as author_name,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.published = 1
-        AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ? OR t.name LIKE ?)
+      WHERE p.published = true 
+        AND (p.title ILIKE $1 OR p.content ILIKE $1 OR p.excerpt ILIKE $1)
     `;
-
-    const params = [`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`];
+    
+    const params = [`%${query}%`];
 
     if (category) {
-      sql += ' AND p.category = ?';
+      sql += ' AND p.category = $2';
       params.push(category);
     }
 
-    sql += ' GROUP BY p.id ORDER BY p.created_at DESC';
+    sql += ' GROUP BY p.id, u.id ORDER BY p.created_at DESC';
 
-    const posts = db.prepare(sql).all(...params);
-
-    return posts.map(post => ({
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    const result = await pool.query(sql, params);
+    return result.rows;
   },
 
-  // Get posts by category
-  getPostsByCategory(category) {
-    const posts = db.prepare(`
+  /**
+   * Get posts by category
+   * @param {string} category - Category name
+   * @returns {Promise<Array>} Posts in category
+   */
+  async getPostsByCategory(category) {
+    const result = await pool.query(`
       SELECT 
-        p.*,
-        u.display_name,
-        GROUP_CONCAT(t.name) as tags
+        p.id, p.title, p.excerpt, p.category, p.slug,
+        p.created_at, u.display_name as author_name,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.category = ? AND p.published = 1
-      GROUP BY p.id
+      WHERE p.category = $1 AND p.published = true
+      GROUP BY p.id, u.id
       ORDER BY p.created_at DESC
-    `).all(category);
-
-    return posts.map(post => ({
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `, [category]);
+    return result.rows;
   },
 
-  // Get all categories
-  getCategories() {
-    return db.prepare(`
-      SELECT category, COUNT(*) as count
-      FROM posts 
-      WHERE published = 1
+  /**
+   * Get all categories
+   * @returns {Promise<Array>} Distinct categories
+   */
+  async getCategories() {
+    const result = await pool.query(`
+      SELECT DISTINCT category, COUNT(*) as post_count
+      FROM posts
+      WHERE published = true
       GROUP BY category
-      ORDER BY category
-    `).all();
+      ORDER BY category ASC
+    `);
+    return result.rows;
   },
 
-  // Get all tags
-  getTags() {
-    return db.prepare(`
-      SELECT t.name, COUNT(pt.post_id) as count
+  /**
+   * Get all tags
+   * @returns {Promise<Array>} All tags with usage count
+   */
+  async getTags() {
+    const result = await pool.query(`
+      SELECT t.id, t.name, COUNT(pt.post_id) as usage_count
       FROM tags t
       LEFT JOIN post_tags pt ON t.id = pt.tag_id
       GROUP BY t.id, t.name
-      ORDER BY count DESC, t.name
-    `).all();
+      ORDER BY usage_count DESC, t.name ASC
+    `);
+    return result.rows;
   },
 
-  // Get database stats
-  getStats() {
-    const postCount = db.prepare('SELECT COUNT(*) as count FROM posts WHERE published = 1').get();
-    const categoryCount = db.prepare('SELECT COUNT(DISTINCT category) as count FROM posts WHERE published = 1').get();
-    const tagCount = db.prepare('SELECT COUNT(*) as count FROM tags').get();
-
-    return {
-      posts: postCount.count,
-      categories: categoryCount.count,
-      tags: tagCount.count
-    };
+  /**
+   * Get database statistics
+   * @returns {Promise<Object>} Database stats
+   */
+  async getStats() {
+    const result = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM posts WHERE published = true) as published_posts,
+        (SELECT COUNT(*) FROM posts) as total_posts,
+        (SELECT COUNT(*) FROM users WHERE role = 'user') as total_users,
+        (SELECT COUNT(*) FROM tags) as total_tags,
+        (SELECT COUNT(DISTINCT author_id) FROM posts) as authors_count,
+        (SELECT COUNT(*) FROM content_reports WHERE status = 'pending') as pending_reports
+    `);
+    return result.rows[0];
   }
 };
 
-// Export the db connection
-export { db };
+// ============================================
+// USER Management Database Operations
+// Phase 2.2: All methods converted to async ✅
+// ============================================
 
-// USER Management database operations
 export const userDB = {
-  // Get user by ID
-  getUserById(id) {
-    return db.prepare('SELECT id, email, display_name, role, status, created_at FROM users WHERE id = ?').get(id);
+  /**
+   * Get user by ID
+   * @param {number} id - User ID
+   * @returns {Promise<Object|null>} User object or null
+   */
+  async getUserById(id) {
+    const result = await pool.query(
+      'SELECT id, email, display_name, role, status, created_at FROM users WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
   },
 
-  // Verify current password
+  /**
+   * Verify current password for a user
+   * @param {number} userId - User ID
+   * @param {string} currentPassword - Password to verify
+   * @returns {Promise<boolean>} True if password is correct
+   */
   async verifyPassword(userId, currentPassword) {
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+    const result = await pool.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [userId]
+    );
+    const user = result.rows[0];
+
     if (!user) {
       throw new Error('User not found');
     }
@@ -584,7 +481,13 @@ export const userDB = {
     return await bcrypt.compare(currentPassword, user.password_hash);
   },
 
-  // Change user password
+  /**
+   * Change user password
+   * @param {number} userId - User ID
+   * @param {string} currentPassword - Current password for verification
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>} Success message
+   */
   async changePassword(userId, currentPassword, newPassword) {
     const isCurrentPasswordValid = await this.verifyPassword(userId, currentPassword);
     if (!isCurrentPasswordValid) {
@@ -592,78 +495,134 @@ export const userDB = {
     }
 
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newPasswordHash, userId]
+    );
 
-    if (result.changes === 0) {
+    if (result.rowCount === 0) {
       throw new Error('Failed to update password');
     }
 
     return { success: true, message: 'Password updated successfully' };
   },
 
-  // Complete immediate account deletion
+  /**
+   * Complete immediate account deletion
+   * @param {number} userId - User ID
+   * @param {string} reason - Reason for deletion
+   * @returns {Promise<Object>} Deletion confirmation
+   */
   async completeAccountDeletion(userId, reason = '') {
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      throw new Error('User not found');
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get user info before deletion
+      const userResult = await client.query('SELECT email FROM users WHERE id = $1', [userId]);
+      const user = userResult.rows[0];
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Count posts before deletion
+      const postCountResult = await client.query(
+        'SELECT COUNT(*) as count FROM posts WHERE author_id = $1',
+        [userId]
+      );
+      const postCount = parseInt(postCountResult.rows[0].count);
+
+      // Delete post tags first (cascade will handle this, but being explicit)
+      await client.query(
+        'DELETE FROM post_tags WHERE post_id IN (SELECT id FROM posts WHERE author_id = $1)',
+        [userId]
+      );
+
+      // Delete posts
+      await client.query('DELETE FROM posts WHERE author_id = $1', [userId]);
+
+      // Delete user
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+
+      await client.query('COMMIT');
+
+      console.log(`🗑️ User ${user.email} deleted their account. ${postCount} posts removed. Reason: ${reason}`);
+
+      return {
+        success: true,
+        message: `Account and ${postCount} posts deleted permanently`,
+        deletedPosts: postCount
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    const postCount = db.prepare('SELECT COUNT(*) as count FROM posts WHERE author_id = ?').get(userId);
-
-    const transaction = db.transaction(() => {
-      db.prepare(`DELETE FROM post_tags WHERE post_id IN (SELECT id FROM posts WHERE author_id = ?)`).run(userId);
-      db.prepare('DELETE FROM posts WHERE author_id = ?').run(userId);
-      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-    });
-
-    transaction();
-
-    console.log(`🗑️ User ${user.email} deleted their account. ${postCount.count} posts removed. Reason: ${reason}`);
-
-    return {
-      success: true,
-      message: `Account and ${postCount.count} posts deleted permanently`,
-      deletedPosts: postCount.count
-    };
   },
 
-  // Get users with pending deletion requests
-  getPendingDeletions() {
-    return db.prepare(`
+  /**
+   * Get users with pending deletion requests
+   * @returns {Promise<Array>} Array of users with pending deletion requests
+   */
+  async getPendingDeletions() {
+    const result = await pool.query(`
       SELECT id, email, display_name, deletion_requested_at, deletion_reason,
              (SELECT COUNT(*) FROM posts WHERE author_id = users.id) as post_count
       FROM users 
       WHERE status = 'deletion_requested'
       ORDER BY deletion_requested_at ASC
-    `).all();
+    `);
+    return result.rows;
   },
 
-  // Create content report
-  createContentReport(reportData) {
+  /**
+   * Create a content report
+   * @param {Object} reportData - Report data
+   * @returns {Promise<Object>} Success with report ID
+   */
+  async createContentReport(reportData) {
     const {
-      issue_type, description, reporter_email, post_id, post_title, 
-      post_url, reporter_ip, user_agent
+      issue_type,
+      description,
+      reporter_email,
+      post_id,
+      post_title,
+      post_url,
+      reporter_ip,
+      user_agent
     } = reportData;
 
-    const result = db.prepare(`
+    const result = await pool.query(`
       INSERT INTO content_reports (
         issue_type, description, reporter_email, post_id, post_title,
         post_url, reporter_ip, user_agent
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      issue_type, description, reporter_email, post_id, post_title,
-      post_url, reporter_ip, user_agent
-    );
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id
+    `, [
+      issue_type,
+      description,
+      reporter_email,
+      post_id,
+      post_title,
+      post_url,
+      reporter_ip,
+      user_agent
+    ]);
 
     return {
       success: true,
-      reportId: result.lastInsertRowid
+      reportId: result.rows[0].id
     };
   },
 
-  // Get all content reports
-  getAllContentReports() {
-    return db.prepare(`
+  /**
+   * Get all content reports
+   * @returns {Promise<Array>} All content reports
+   */
+  async getAllContentReports() {
+    const result = await pool.query(`
       SELECT cr.*, 
              p.title as current_post_title,
              u.display_name
@@ -677,54 +636,85 @@ export const userDB = {
           ELSE 3 
         END,
         cr.created_at DESC
-    `).all();
+    `);
+    return result.rows;
   },
 
-  // Get content report by ID
-  getContentReportById(id) {
-    return db.prepare(`
+  /**
+   * Get content report by ID
+   * @param {number} id - Report ID
+   * @returns {Promise<Object|null>} Report object or null
+   */
+  async getContentReportById(id) {
+    const result = await pool.query(`
       SELECT cr.*, 
              p.title as current_post_title,
              u.display_name
       FROM content_reports cr
       LEFT JOIN posts p ON cr.post_id = p.id
       LEFT JOIN users u ON cr.resolved_by = u.id
-      WHERE cr.id = ?
-    `).get(id);
+      WHERE cr.id = $1
+    `, [id]);
+    return result.rows[0] || null;
   },
 
-  // Update content report status
-  updateContentReportStatus(reportId, status, adminResponse = null, resolvedBy = null) {
+  /**
+   * Update content report status
+   * @param {number} reportId - Report ID
+   * @param {string} status - New status
+   * @param {string} adminResponse - Admin response text
+   * @param {number} resolvedBy - User ID who resolved it
+   * @returns {Promise<Object>} Success message
+   */
+  async updateContentReportStatus(reportId, status, adminResponse = null, resolvedBy = null) {
     const validStatuses = ['pending', 'reviewed', 'resolved', 'dismissed'];
     if (!validStatuses.includes(status)) {
       throw new Error('Invalid status');
     }
 
-    const resolvedAt = (status === 'resolved' || status === 'dismissed') ? new Date().toISOString() : null;
+    const resolvedAt = (status === 'resolved' || status === 'dismissed')
+      ? new Date().toISOString()
+      : null;
 
-    const result = db.prepare(`
+    const result = await pool.query(`
       UPDATE content_reports 
-      SET status = ?, admin_response = ?, resolved_by = ?, resolved_at = ?
-      WHERE id = ?
-    `).run(status, adminResponse, resolvedBy, resolvedAt, reportId);
+      SET status = $1, admin_response = $2, resolved_by = $3, resolved_at = $4
+      WHERE id = $5
+    `, [status, adminResponse, resolvedBy, resolvedAt, reportId]);
 
-    if (result.changes === 0) {
+    if (result.rowCount === 0) {
       throw new Error('Report not found');
     }
 
     return { success: true };
   },
 
-  // Reset user password (admin function)
+  /**
+   * Reset user password (admin function)
+   * @param {number} adminId - Admin user ID
+   * @param {number} userId - User whose password to reset
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>} Success with user details
+   */
   async resetUserPassword(adminId, userId, newPassword) {
     // Verify admin exists and has admin role
-    const admin = db.prepare('SELECT role FROM users WHERE id = ?').get(adminId);
+    const adminResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1',
+      [adminId]
+    );
+    const admin = adminResult.rows[0];
+
     if (!admin || admin.role !== 'admin') {
       throw new Error('Only administrators can reset passwords');
     }
 
     // Verify target user exists
-    const user = db.prepare('SELECT id, email, display_name FROM users WHERE id = ?').get(userId);
+    const userResult = await pool.query(
+      'SELECT id, email, display_name FROM users WHERE id = $1',
+      [userId]
+    );
+    const user = userResult.rows[0];
+
     if (!user) {
       throw new Error('User not found');
     }
@@ -733,16 +723,19 @@ export const userDB = {
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
 
     // Update the password
-    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
+    const updateResult = await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newPasswordHash, userId]
+    );
 
-    if (result.changes === 0) {
+    if (updateResult.rowCount === 0) {
       throw new Error('Failed to update password');
     }
 
     console.log(`🔑 Admin (ID: ${adminId}) reset password for user: ${user.email} (${user.display_name})`);
 
-    return { 
-      success: true, 
+    return {
+      success: true,
       message: 'Password reset successfully',
       userId: user.id,
       userEmail: user.email,
@@ -750,5 +743,5 @@ export const userDB = {
     };
   }
 };
-export { pathsDB } from './paths.js';
 
+export { pathsDB } from './paths.js';

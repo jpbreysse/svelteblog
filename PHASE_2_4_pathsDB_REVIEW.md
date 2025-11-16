@@ -1,8 +1,6 @@
-import { pool } from './db.js';
-
 // ============================================
 // PATHS Database Operations (Hierarchical)
-// Phase 2.4: All methods converted to async ✅
+// Phase 2.4: All methods converted to async
 // ============================================
 
 export const pathsDB = {
@@ -108,8 +106,6 @@ export const pathsDB = {
       throw new Error('Failed to create path');
     }
 
-    console.log(`📁 Created path: ${full_path} (ID: ${result.rows[0].id})`);
-
     return {
       success: true,
       path: result.rows[0]
@@ -135,8 +131,6 @@ export const pathsDB = {
     if (result.rowCount === 0) {
       throw new Error('Path not found');
     }
-
-    console.log(`📝 Updated path: ID ${id}`);
 
     return { success: true, message: 'Path updated successfully' };
   },
@@ -171,8 +165,6 @@ export const pathsDB = {
       );
 
       await client.query('COMMIT');
-
-      console.log(`🗑️ Deleted ${deletedCount} path(s)`);
 
       return {
         success: true,
