@@ -28,6 +28,37 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
 
 -- ============================================
+-- PATHS TABLE (Hierarchical Organization)
+-- ============================================
+CREATE TABLE IF NOT EXISTS paths (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(255) NOT NULL,
+  slug VARCHAR(100) NOT NULL,
+  description TEXT,
+  parent_id INTEGER REFERENCES paths(id) ON DELETE CASCADE,
+  level INTEGER DEFAULT 1 CHECK(level >= 1 AND level <= 5),
+  full_path VARCHAR(500) UNIQUE NOT NULL,
+  icon VARCHAR(50),
+  color VARCHAR(50),
+  position INTEGER DEFAULT 0,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Indexes for path queries
+CREATE INDEX IF NOT EXISTS idx_paths_parent_id ON paths(parent_id);
+CREATE INDEX IF NOT EXISTS idx_paths_level ON paths(level);
+CREATE INDEX IF NOT EXISTS idx_paths_full_path ON paths(full_path);
+CREATE INDEX IF NOT EXISTS idx_paths_slug ON paths(slug);
+CREATE INDEX IF NOT EXISTS idx_paths_created_by ON paths(created_by);
+CREATE INDEX IF NOT 
+
+
+
+
+
+-- ============================================
 -- POSTS TABLE
 -- ============================================
 CREATE TABLE IF NOT EXISTS posts (
@@ -77,32 +108,6 @@ CREATE TABLE IF NOT EXISTS post_tags (
 CREATE INDEX IF NOT EXISTS idx_post_tags_post_id ON post_tags(post_id);
 CREATE INDEX IF NOT EXISTS idx_post_tags_tag_id ON post_tags(tag_id);
 
--- ============================================
--- PATHS TABLE (Hierarchical Organization)
--- ============================================
-CREATE TABLE IF NOT EXISTS paths (
-  id SERIAL PRIMARY KEY,
-  name VARCHAR(255) NOT NULL,
-  slug VARCHAR(100) NOT NULL,
-  description TEXT,
-  parent_id INTEGER REFERENCES paths(id) ON DELETE CASCADE,
-  level INTEGER DEFAULT 1 CHECK(level >= 1 AND level <= 5),
-  full_path VARCHAR(500) UNIQUE NOT NULL,
-  icon VARCHAR(50),
-  color VARCHAR(50),
-  position INTEGER DEFAULT 0,
-  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
--- Indexes for path queries
-CREATE INDEX IF NOT EXISTS idx_paths_parent_id ON paths(parent_id);
-CREATE INDEX IF NOT EXISTS idx_paths_level ON paths(level);
-CREATE INDEX IF NOT EXISTS idx_paths_full_path ON paths(full_path);
-CREATE INDEX IF NOT EXISTS idx_paths_slug ON paths(slug);
-CREATE INDEX IF NOT EXISTS idx_paths_created_by ON paths(created_by);
-CREATE INDEX IF NOT EXISTS idx_paths_position ON paths(position);
 
 -- ============================================
 -- CONTENT_REPORTS TABLE

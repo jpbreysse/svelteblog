@@ -25,8 +25,9 @@ const pool = new Pool({
 
 // Connection pool event handlers
 pool.on('error', (err) => {
-  console.error('❌ Unexpected error on idle client', err);
-  process.exit(-1);
+  console.error('❌ Pool error (will attempt to recover):', err.message);
+  console.error('   Error code:', err.code);
+  // Don't exit - let the pool recover and retry connections automatically
 });
 
 pool.on('connect', () => {
@@ -98,10 +99,10 @@ export const blogDB = {
    */
   async getAllPosts() {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         p.id, p.title, p.content, p.excerpt, p.category, p.slug,
         p.read_time, p.created_at, p.updated_at, p.published,
-        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
       FROM posts p
@@ -116,23 +117,25 @@ export const blogDB = {
   },
 
   /**
-   * Get posts by user
+   * Get posts by user/author
    * @param {number} userId - User ID
    * @returns {Promise<Array>} Posts authored by user
    */
   async getPostsByUser(userId) {
     const result = await pool.query(`
-      SELECT 
+      SELECT
         p.id, p.title, p.content, p.excerpt, p.category, p.slug,
         p.read_time, p.created_at, p.updated_at, p.published,
-        u.id as author_id, u.display_name as author_name,
-        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
+        u.id as author_id, u.display_name as author, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.author_id = $1
-      GROUP BY p.id, u.id
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.author_id = $1 AND p.published = true
+      GROUP BY p.id, u.id, pa.id
       ORDER BY p.created_at DESC
     `, [userId]);
     return result.rows;
@@ -147,7 +150,7 @@ export const blogDB = {
     const result = await pool.query(`
       SELECT 
         p.*,
-        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
       FROM posts p
@@ -170,7 +173,7 @@ export const blogDB = {
     const result = await pool.query(`
       SELECT 
         p.*,
-        u.id as author_id, u.display_name as author_name, u.email as author_email,
+        u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
       FROM posts p
@@ -221,10 +224,11 @@ export const blogDB = {
    * @param {number} id - Post ID
    * @param {Object} postData - Updated data
    * @param {number} authorId - User ID (for authorization)
+   * @param {boolean} isAdmin - Whether user is admin
    * @returns {Promise<Object>} Success message
    */
-  async updatePost(id, postData, authorId) {
-    // Verify post belongs to author
+  async updatePost(id, postData, authorId, isAdmin = false) {
+    // Verify post exists
     const postResult = await pool.query(
       'SELECT author_id FROM posts WHERE id = $1',
       [id]
@@ -235,8 +239,13 @@ export const blogDB = {
       throw new Error('Post not found');
     }
 
-    if (post.author_id !== authorId) {
-      throw new Error('You can only edit your own posts');
+    // Convert both to numbers for comparison (handle string IDs from requests)
+    const postAuthorId = parseInt(post.author_id);
+    const userId = parseInt(authorId);
+
+    // Allow if user is author OR admin
+    if (postAuthorId !== userId && !isAdmin) {
+      throw new Error(`You can only edit your own posts (post author: ${postAuthorId}, user: ${userId})`);
     }
 
     // Update the post
@@ -262,10 +271,11 @@ export const blogDB = {
    * Delete post
    * @param {number} id - Post ID
    * @param {number} authorId - User ID (for authorization)
+   * @param {boolean} isAdmin - Whether user is admin
    * @returns {Promise<Object>} Success message
    */
-  async deletePost(id, authorId) {
-    // Verify post belongs to author
+  async deletePost(id, authorId, isAdmin = false) {
+    // Verify post exists
     const postResult = await pool.query(
       'SELECT author_id FROM posts WHERE id = $1',
       [id]
@@ -276,7 +286,12 @@ export const blogDB = {
       throw new Error('Post not found');
     }
 
-    if (post.author_id !== authorId) {
+    // Convert both to numbers for comparison (handle string IDs from requests)
+    const postAuthorId = parseInt(post.author_id);
+    const userId = parseInt(authorId);
+
+    // Allow if user is author OR admin
+    if (postAuthorId !== userId && !isAdmin) {
       throw new Error('You can only delete your own posts');
     }
 
@@ -349,7 +364,7 @@ export const blogDB = {
     let sql = `
       SELECT 
         p.id, p.title, p.excerpt, p.category, p.slug,
-        p.created_at, u.display_name as author_name,
+        p.created_at, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -381,7 +396,7 @@ export const blogDB = {
     const result = await pool.query(`
       SELECT 
         p.id, p.title, p.excerpt, p.category, p.slug,
-        p.created_at, u.display_name as author_name,
+        p.created_at, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -425,6 +440,22 @@ export const blogDB = {
   },
 
   /**
+   * Get all authors who have published posts
+   * @returns {Promise<Array>} All authors with post count
+   */
+  async getAuthors() {
+    const result = await pool.query(`
+      SELECT DISTINCT u.id, u.display_name, COUNT(p.id) as post_count
+      FROM users u
+      INNER JOIN posts p ON u.id = p.author_id
+      WHERE p.published = true
+      GROUP BY u.id, u.display_name
+      ORDER BY u.display_name ASC
+    `);
+    return result.rows;
+  },
+
+  /**
    * Get database statistics
    * @returns {Promise<Object>} Database stats
    */
@@ -459,6 +490,44 @@ export const userDB = {
       [id]
     );
     return result.rows[0] || null;
+  },
+
+  /**
+   * Get user by email
+   * @param {string} email - User email
+   * @returns {Promise<Object|null>} User object or null
+   */
+  async getUserByEmail(email) {
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1',
+      [email.toLowerCase()]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new user
+   * @param {Object} userData - User data (email, display_name, password_hash, role)
+   * @returns {Promise<Object>} Created user with ID
+   */
+  async createUser(userData) {
+    const { email, display_name, password_hash, role = 'user' } = userData;
+    
+    const result = await pool.query(`
+      INSERT INTO users (email, display_name, password_hash, role, status)
+      VALUES ($1, $2, $3, $4, 'pending')
+      RETURNING id, email, display_name, role, status, created_at
+    `, [email.toLowerCase(), display_name, password_hash, role]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create user');
+    }
+
+    return {
+      success: true,
+      userId: result.rows[0].id,
+      user: result.rows[0]
+    };
   },
 
   /**

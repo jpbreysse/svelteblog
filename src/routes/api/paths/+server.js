@@ -13,13 +13,13 @@ export async function GET({ url, locals }) {
 
     if (format === 'tree') {
       // Return hierarchical tree structure
-      paths = pathsDB.getPathTree(parentId ? parseInt(parentId) : null);
+      paths = await pathsDB.getPathHierarchy(parentId ? parseInt(parentId) : null);
     } else if (format === 'flat') {
       // Return flat list
-      paths = pathsDB.getAllPaths();
+      paths = await pathsDB.getAllPaths();
     } else if (format === 'children') {
       // Return only direct children of parent
-      paths = pathsDB.getChildPaths(parentId ? parseInt(parentId) : null);
+      paths = await pathsDB.getPathChildren(parentId ? parseInt(parentId) : null);
     } else {
       return json({ error: 'Invalid format parameter' }, { status: 400 });
     }
@@ -31,7 +31,7 @@ export async function GET({ url, locals }) {
     });
 
   } catch (error) {
-    console.error('Error fetching paths:', error);
+    console.error('❌ Error fetching paths:', error);
     return json({ error: error.message }, { status: 500 });
   }
 }
@@ -51,17 +51,19 @@ export async function POST({ request, locals }) {
       return json({ error: 'Path name is required' }, { status: 400 });
     }
 
-    // Create the path
-    const newPath = pathsDB.createPath(pathData, locals.user.id);
+    console.log('📁 Creating path:', pathData.name);
+
+    // Create the path - slug will be auto-generated from name
+    const result = await pathsDB.createPath(pathData, locals.user.id);
 
     return json({
       success: true,
-      path: newPath,
-      message: `Path "${newPath.full_path}" created successfully`
+      path: result.path,
+      message: `Path "${result.path.full_path}" created successfully`
     }, { status: 201 });
 
   } catch (error) {
-    console.error('Error creating path:', error);
+    console.error('❌ Error creating path:', error.message);
     return json({ error: error.message }, { status: 400 });
   }
 }

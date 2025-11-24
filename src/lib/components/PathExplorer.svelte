@@ -1,11 +1,13 @@
 <script>
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
+    import { invalidateAll } from '$app/navigation';
     import PathTree from './PathTree.svelte';
     import PathBreadcrumb from './PathBreadcrumb.svelte';
-    
+
     export let showPostsList = true;
     export let allowFileUpload = false;
+    export let user = null;
     
     let treeData = [];
     let currentPath = null;
@@ -110,11 +112,6 @@ async function handlePathSelect(event) {
       }
     }
     
-    // Edit post
-    function handleEditPost(post) {
-      goto(`/blog?edit=${post.id}`);
-    }
-    
     $: filteredPosts = posts.filter(post => {
       if (!searchQuery) return true;
       const query = searchQuery.toLowerCase();
@@ -124,15 +121,52 @@ async function handlePathSelect(event) {
     
     $: sortedPosts = [...filteredPosts].sort((a, b) => {
       let comparison = 0;
-      
+
       if (sortBy === 'name') {
         comparison = a.title.localeCompare(b.title);
       } else if (sortBy === 'date') {
         comparison = new Date(a.created_at) - new Date(b.created_at);
       }
-      
+
       return sortOrder === 'asc' ? comparison : -comparison;
     });
+
+    // Authorization check for editing posts
+    function canEditPost(post) {
+      return user && (post.author_id === user.id || user.role === 'admin');
+    }
+
+    // Edit post - redirect to blog page with edit mode and return URL
+    function editPost(post) {
+      goto(`/blog?edit=${post.id}&return=/explorer`);
+    }
+
+    // Delete post
+    async function deletePost(postId) {
+      if (!confirm('Are you sure you want to delete this post?')) return;
+
+      loading = true;
+      try {
+        const response = await fetch(`/api/posts/${postId}`, {
+          method: 'DELETE'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          alert('✅ Post deleted successfully!');
+          // Reload posts for current path
+          await loadPosts(currentPath);
+        } else {
+          alert(`❌ Error deleting post: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Error deleting post:', error);
+        alert('❌ Failed to delete post. Please try again.');
+      } finally {
+        loading = false;
+      }
+    }
   </script>
   
   <div class="path-explorer">
@@ -283,17 +317,20 @@ async function handlePathSelect(event) {
                         <h4 class="post-title">
                           <a href="/blog/{post.slug}">{post.title}</a>
                         </h4>
-                        <button 
-                          class="icon-btn edit-icon-btn"
-                          on:click={() => handleEditPost(post)}
-                          title="Edit post"
-                        >
-                          ✏️
-                        </button>
                       </div>
-                      {#if post.category}
-                        <span class="post-category">{post.category}</span>
-                      {/if}
+                      <div class="post-actions">
+                        {#if canEditPost(post)}
+                          <button class="action-btn edit-btn" on:click={() => editPost(post)} title="Edit post" disabled={loading}>
+                            ✏️
+                          </button>
+                          <button class="action-btn delete-btn" on:click={() => deletePost(post.id)} title="Delete post" disabled={loading}>
+                            🗑️
+                          </button>
+                        {/if}
+                        {#if post.category}
+                          <span class="post-category">{post.category}</span>
+                        {/if}
+                      </div>
                     </div>
                     
                     {#if post.excerpt}
@@ -666,12 +703,45 @@ async function handlePathSelect(event) {
       gap: 1rem;
       margin-bottom: 0.75rem;
     }
-    
+
     .post-title-wrapper {
       display: flex;
       align-items: center;
       gap: 0.5rem;
       flex: 1;
+    }
+
+    .post-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .action-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 0.25rem;
+      border-radius: 4px;
+      transition: background-color 0.2s;
+      font-size: 1rem;
+    }
+
+    .action-btn:hover:not(:disabled) {
+      background: #f3f4f6;
+    }
+
+    .action-btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .edit-btn:hover:not(:disabled) {
+      background: #dbeafe;
+    }
+
+    .delete-btn:hover:not(:disabled) {
+      background: #fee2e2;
     }
     
     .post-title {

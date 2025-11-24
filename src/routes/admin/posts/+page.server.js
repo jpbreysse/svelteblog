@@ -1,8 +1,8 @@
-import { redirect } from '@sveltejs/kit';
-import { db, blogDB } from '$lib/db.js';
+import { redirect, error, fail } from '@sveltejs/kit';
+import { blogDB } from '$lib/db.js';
 
 export async function load({ locals, url }) {
-  console.log('🗂️  Admin posts page load - User:', locals.user);
+  console.log('🗂️  Admin posts page load - User:', locals.user?.email);
   
   // Check if user exists
   if (!locals.user) {
@@ -13,127 +13,151 @@ export async function load({ locals, url }) {
   // Check if user is admin
   if (locals.user.role !== 'admin') {
     console.log('❌ User is not admin:', locals.user.role);
-    throw redirect(303, '/');
+    throw error(403, 'Admin access required');
   }
   
   console.log('✅ Admin posts access granted');
   
   try {
-    // Get search and filter parameters
+    // ✅ FIXED: Get all posts using async blogDB
+    const allPosts = await blogDB.getAllPosts();
+    
+    // Get filters from URL
     const searchQuery = url.searchParams.get('search') || '';
-    const authorFilter = url.searchParams.get('author') || '';
     const categoryFilter = url.searchParams.get('category') || '';
     const statusFilter = url.searchParams.get('status') || '';
     
-    // Build the query with filters
-    let sql = `
-      SELECT 
-        p.*,
-        u.display_name, u.email,
-        GROUP_CONCAT(t.name) as tags,
-        COUNT(DISTINCT cr.id) as report_count
-      FROM posts p
-      INNER JOIN users u ON p.author_id = u.id
-      LEFT JOIN post_tags pt ON p.id = pt.post_id
-      LEFT JOIN tags t ON pt.tag_id = t.id
-      LEFT JOIN content_reports cr ON cr.post_id = p.id AND cr.status = 'pending'
-      WHERE 1=1
-    `;
+    // Filter posts in memory
+    let filteredPosts = allPosts;
     
-    const params = [];
-    
-    // Add search filter
     if (searchQuery) {
-      sql += ' AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ?)';
-      params.push(`%${searchQuery}%`, `%${searchQuery}%`, `%${searchQuery}%`);
+      const query = searchQuery.toLowerCase();
+      filteredPosts = filteredPosts.filter(p => 
+        p.title.toLowerCase().includes(query) ||
+        p.content.toLowerCase().includes(query) ||
+        p.excerpt.toLowerCase().includes(query)
+      );
     }
     
-    // Add author filter
-    if (authorFilter) {
-      sql += ' AND u.display_name LIKE ?';
-      params.push(`%${authorFilter}%`);
-    }
-    
-    // Add category filter
     if (categoryFilter) {
-      sql += ' AND p.category = ?';
-      params.push(categoryFilter);
+      filteredPosts = filteredPosts.filter(p => p.category === categoryFilter);
     }
     
-    // Add status filter
     if (statusFilter) {
       if (statusFilter === 'published') {
-        sql += ' AND p.published = 1';
+        filteredPosts = filteredPosts.filter(p => p.published);
       } else if (statusFilter === 'draft') {
-        sql += ' AND p.published = 0';
+        filteredPosts = filteredPosts.filter(p => !p.published);
       }
     }
     
-    sql += ' GROUP BY p.id ORDER BY p.created_at DESC';
+    // ✅ FIXED: Get categories with await
+    const categories = await blogDB.getCategories();
     
-    const posts = db.prepare(sql).all(...params);
+    // Get unique authors from posts
+    const authors = Array.from(
+      new Map(
+        allPosts.map(p => [p.author_id, { id: p.author_id, name: p.author_name }])
+      ).values()
+    );
     
-    // Transform the data
-    const transformedPosts = posts.map(post => ({
-      ...post,
-      author: post.display_name,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at),
-      has_reports: post.report_count > 0
-    }));
-    
-    // Get all authors for filter dropdown
-    const authors = db.prepare(`
-      SELECT DISTINCT u.display_name, u.id
-      FROM users u
-      INNER JOIN posts p ON u.id = p.author_id
-      ORDER BY u.display_name
-    `).all();
-    
-    // Get all categories for filter dropdown
-    const categories = blogDB.getCategories();
-    
-    // Get statistics
+    // Calculate statistics
     const stats = {
-      total: transformedPosts.length,
-      published: transformedPosts.filter(p => p.published).length,
-      drafts: transformedPosts.filter(p => !p.published).length,
-      withReports: transformedPosts.filter(p => p.has_reports).length
+      total: allPosts.length,
+      published: allPosts.filter(p => p.published).length,
+      drafts: allPosts.filter(p => !p.published).length,
+      filtered: filteredPosts.length
     };
     
     console.log('📊 Posts loaded:', {
       total: stats.total,
       published: stats.published,
       drafts: stats.drafts,
-      withReports: stats.withReports
+      filtered: stats.filtered
     });
     
     return {
-      posts: transformedPosts,
+      posts: filteredPosts,
       authors,
       categories,
       stats,
       filters: {
         search: searchQuery,
-        author: authorFilter,
         category: categoryFilter,
         status: statusFilter
       }
     };
   } catch (error) {
-    console.error('❌ Error loading admin posts data:', error);
-    return {
-      posts: [],
-      authors: [],
-      categories: [],
-      stats: { total: 0, published: 0, drafts: 0, withReports: 0 },
-      filters: {
-        search: '',
-        author: '',
-        category: '',
-        status: ''
-      }
-    };
+    console.error('❌ Error loading admin posts data:', error.message);
+    throw error(500, 'Failed to load posts');
   }
 }
+
+export const actions = {
+  // Update post status (publish/unpublish)
+  updateStatus: async ({ request, locals }) => {
+    if (!locals.user || locals.user.role !== 'admin') {
+      return fail(403, { error: 'Admin access required' });
+    }
+
+    try {
+      const data = await request.formData();
+      const postId = parseInt(data.get('post_id'));
+      const published = data.get('published') === 'true';
+
+      console.log('📝 Updating post status:', postId, 'published:', published);
+
+      // Get post first
+      const post = await blogDB.getPostById(postId);
+      if (!post) {
+        return fail(404, { error: 'Post not found' });
+      }
+
+      // Update post (as the original author)
+      await blogDB.updatePost(postId, {
+        title: post.title,
+        content: post.content,
+        category: post.category,
+        path_id: post.path_id,
+        published
+      }, post.author_id);
+
+      console.log('✅ Post status updated');
+
+      return { success: true, message: 'Post status updated' };
+    } catch (error) {
+      console.error('❌ Error updating post status:', error.message);
+      return fail(500, { error: error.message });
+    }
+  },
+
+  // Delete post
+  delete: async ({ request, locals }) => {
+    if (!locals.user || locals.user.role !== 'admin') {
+      return fail(403, { error: 'Admin access required' });
+    }
+
+    try {
+      const data = await request.formData();
+      const postId = parseInt(data.get('post_id'));
+
+      console.log('🗑️  Deleting post:', postId);
+
+      // Get post first
+      const post = await blogDB.getPostById(postId);
+      if (!post) {
+        return fail(404, { error: 'Post not found' });
+      }
+
+      // Delete post (as the original author)
+      await blogDB.deletePost(postId, post.author_id);
+
+      console.log('✅ Post deleted');
+
+      return { success: true, message: 'Post deleted successfully' };
+    } catch (error) {
+      console.error('❌ Error deleting post:', error.message);
+      return fail(500, { error: error.message });
+    }
+  }
+};

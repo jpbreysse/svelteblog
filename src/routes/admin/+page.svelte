@@ -64,30 +64,6 @@
         alert('Password copied to clipboard!');
       }
     }
-    
-    async function downloadBackup() {
-      try {
-        const response = await fetch('/api/admin/backup?format=json');
-        
-        if (!response.ok) {
-          throw new Error('Failed to create backup');
-        }
-        
-        const blob = await response.blob();
-        const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `backup-${Date.now()}.json`;
-        document.body.appendChild(a);
-        a.click();
-        window.URL.revokeObjectURL(url);
-        document.body.removeChild(a);
-        
-        alert('✅ Backup downloaded successfully!');
-      } catch (error) {
-        alert('❌ Failed to download backup: ' + error.message);
-      }
-    }
   </script>
   
   <svelte:head>
@@ -109,9 +85,6 @@
           <span class="badge">{data.reportStats.pending}</span>
         {/if}
       </a>
-      <button class="nav-link backup-link" on:click={downloadBackup}>
-        💾 Download Backup
-      </button>
     </div>
     
     <div class="controls">
@@ -305,17 +278,7 @@
   .nav-link.posts-link:hover {
     background: #047857;
   }
-  
-  .nav-link.backup-link {
-    background: #8b5cf6;
-    border: none;
-    cursor: pointer;
-  }
-  
-  .nav-link.backup-link:hover {
-    background: #7c3aed;
-  }
-    
+
     .badge {
     background: #dc2626;
     color: white;

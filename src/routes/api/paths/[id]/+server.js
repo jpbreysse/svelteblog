@@ -10,29 +10,29 @@ export async function GET({ params, locals }) {
       return json({ error: 'Invalid path ID' }, { status: 400 });
     }
 
-    const path = pathsDB.getPathById(pathId);
+    const path = await pathsDB.getPathById(pathId);
 
     if (!path) {
       return json({ error: 'Path not found' }, { status: 404 });
     }
 
     // Get children
-    const children = pathsDB.getChildPaths(pathId);
+    const children = await pathsDB.getPathChildren(pathId);
 
-    // Get statistics
-    const stats = pathsDB.getPathStats(pathId);
+    // Get statistics  
+    const stats = await pathsDB.getPathStatistics();
 
     return json({
       success: true,
       path: {
         ...path,
-        children,
-        stats
+        children_count: children.length,
+        children
       }
     });
 
   } catch (error) {
-    console.error('Error fetching path:', error);
+    console.error('❌ Error fetching path:', error);
     return json({ error: error.message }, { status: 500 });
   }
 }
@@ -53,8 +53,11 @@ export async function PUT({ params, request, locals }) {
 
     const pathData = await request.json();
 
-    // Update the path
-    const updatedPath = pathsDB.updatePath(pathId, pathData, locals.user.id);
+    // Update the path - MUST AWAIT
+    const result = await pathsDB.updatePath(pathId, pathData);
+
+    // Return updated path details
+    const updatedPath = await pathsDB.getPathById(pathId);
 
     return json({
       success: true,
@@ -63,7 +66,7 @@ export async function PUT({ params, request, locals }) {
     });
 
   } catch (error) {
-    console.error('Error updating path:', error);
+    console.error('❌ Error updating path:', error.message);
     return json({ error: error.message }, { status: 400 });
   }
 }
@@ -82,20 +85,24 @@ export async function DELETE({ params, url, locals }) {
       return json({ error: 'Invalid path ID' }, { status: 400 });
     }
 
-    // Check for cascade parameter
-    const cascade = url.searchParams.get('cascade') === 'true';
+    // Get path name before deleting
+    const pathToDelete = await pathsDB.getPathById(pathId);
+    
+    if (!pathToDelete) {
+      return json({ error: 'Path not found' }, { status: 404 });
+    }
 
-    // Delete the path
-    const result = pathsDB.deletePath(pathId, cascade);
+    // Delete the path - MUST AWAIT
+    const result = await pathsDB.deletePath(pathId);
 
     return json({
       success: true,
-      message: `Path "${result.deleted}" deleted successfully`,
-      cascade
+      message: `Path "${pathToDelete.full_path}" deleted successfully`,
+      deletedCount: result.deletedCount
     });
 
   } catch (error) {
-    console.error('Error deleting path:', error);
+    console.error('❌ Error deleting path:', error.message);
     return json({ error: error.message }, { status: 400 });
   }
 }

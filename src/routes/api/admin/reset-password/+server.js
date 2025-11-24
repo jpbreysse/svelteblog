@@ -31,8 +31,7 @@ export async function POST({ request, locals }) {
     }
 
     // Get user info to generate password
-    const { userDB: db } = await import('$lib/db.js');
-    const user = db.getUserById(userId);
+    const user = await userDB.getUserById(userId);
     
     if (!user) {
       return json({ 
@@ -56,7 +55,7 @@ export async function POST({ request, locals }) {
     });
 
   } catch (error) {
-    console.error('Admin password reset error:', error);
+    console.error('❌ Admin password reset error:', error);
     
     return json({ 
       success: false, 

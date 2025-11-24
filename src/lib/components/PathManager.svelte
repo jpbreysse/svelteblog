@@ -92,22 +92,39 @@
       success = null;
     }
     
+    // Helper function to generate slug from name
+    function generateSlug(name) {
+      return name
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')  // Replace non-alphanumeric with hyphens
+        .replace(/^-+|-+$/g, '')      // Remove leading/trailing hyphens
+        .substring(0, 50);             // Limit to 50 chars
+    }
+    
     async function handleSubmit() {
       loading = true;
       error = null;
       success = null;
       
       try {
+        // Generate slug from name if creating new path
+        const submitData = {
+          ...formData,
+          slug: generateSlug(formData.name)
+        };
+
         const url = isEditing 
           ? `/api/paths/${selectedPath}`
           : '/api/paths';
         
         const method = isEditing ? 'PUT' : 'POST';
         
+        console.log('📤 Submitting path data:', submitData);
+
         const response = await fetch(url, {
           method,
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(formData)
+          body: JSON.stringify(submitData)
         });
         
         const data = await response.json();

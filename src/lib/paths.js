@@ -7,6 +7,22 @@ import { pool } from './db.js';
 
 export const pathsDB = {
   /**
+   * Generate slug from name
+   * @param {string} name - Path name
+   * @returns {string} Generated slug
+   */
+  generateSlug(name) {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')          // Replace spaces with hyphens
+      .replace(/[^a-z0-9-]/g, '')    // Remove special characters
+      .replace(/-+/g, '-')            // Replace multiple hyphens with single
+      .replace(/^-+|-+$/g, '')        // Remove leading/trailing hyphens
+      .substring(0, 50);              // Limit length
+  },
+
+  /**
    * Get all paths (flat list)
    * @returns {Promise<Array>} All paths
    */
@@ -70,7 +86,16 @@ export const pathsDB = {
    * @returns {Promise<Object>} Created path
    */
   async createPath(pathData, userId) {
-    const { name, slug, description = null, parent_id = null, icon = null, color = null, position = 0 } = pathData;
+    const { name, description = null, parent_id = null, icon = null, color = null, position = 0 } = pathData;
+
+    // Auto-generate slug from name if not provided
+    let slug = pathData.slug || this.generateSlug(name);
+
+    if (!slug || slug.trim().length === 0) {
+      throw new Error('Unable to generate slug from path name');
+    }
+
+    console.log(`📁 Creating path: "${name}" → slug: "${slug}"`);
 
     // Determine level and full_path
     let level = 1;
@@ -108,7 +133,7 @@ export const pathsDB = {
       throw new Error('Failed to create path');
     }
 
-    console.log(`📁 Created path: ${full_path} (ID: ${result.rows[0].id})`);
+    console.log(`✅ Created path: ${full_path} (ID: ${result.rows[0].id})`);
 
     return {
       success: true,

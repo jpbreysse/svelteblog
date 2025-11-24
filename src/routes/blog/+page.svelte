@@ -12,13 +12,15 @@
     // Use server-loaded data - these will be reactive to data changes
     $: posts = data.posts || [];
     $: categories = data.categories || [];
+    $: authors = data.authors || [];
     $: stats = data.stats || { posts: 0, categories: 0, tags: 0 };
     $: searchQuery = data.searchQuery || '';
     $: selectedCategory = data.categoryFilter || 'all';
+    $: selectedAuthor = data.authorFilter || 'all';
     $: paths = data.paths || [];
     
     // Handle edit post from URL parameter
-    $: if (data.editPost && !showEditor) {
+    $: if (data.editPost && !showEditor && !closingEditor) {
       editPost(data.editPost);
     }
     
@@ -28,12 +30,13 @@
     
     // Debug reactive updates
     $: console.log('🔄 Posts updated, count:', posts.length);
-    
+
     let showEditor = false;
     let editingPost = null;
     let quill = null;
     let editorContainer;
     let loading = false;
+    let closingEditor = false; // Flag to prevent reactive reopening after save/cancel
     
     // Report modal state
     let showReportModal = false;
@@ -66,7 +69,8 @@
       const params = new URLSearchParams();
       if (searchQuery) params.set('search', searchQuery);
       if (selectedCategory !== 'all') params.set('category', selectedCategory);
-      
+      if (selectedAuthor !== 'all') params.set('author', selectedAuthor);
+
       const url = `/blog${params.toString() ? '?' + params.toString() : ''}`;
       goto(url);
     }
@@ -171,7 +175,7 @@
           content: editingPost.content,
           category: editingPost.category,
           tags: editingPost.tags || [],
-          path_id: editingPost.path_id || 1
+          path_id: editingPost.path_id || null  // Use null if no path selected
         };
         
         let response;
@@ -195,15 +199,26 @@
         
         if (result.success) {
           console.log('✅ Post saved successfully:', result);
+          // Set flag to prevent reactive statement from reopening editor
+          closingEditor = true;
+          // Properly clean up editor
+          if (editorContainer) {
+            editorContainer.innerHTML = '';
+          }
           showEditor = false;
           editingPost = null;
           quill = null;
-          // Invalidate all data and reload current page
-          console.log('🔄 Invalidating data...');
+          // Check if there's a return URL parameter to go back to where user came from
+          const urlParams = new URLSearchParams(window.location.search);
+          const returnUrl = urlParams.get('return');
+          const destination = returnUrl || '/blog';
+          console.log('🔄 Navigating to:', destination);
+          await goto(destination, { replaceState: true });
+          // Invalidate to refresh the post list
           await invalidateAll();
-          console.log('✅ Data invalidated, posts should refresh');
-          // Redirect to explorer
-          goto('/explorer');
+          // Reset flag after navigation completes
+          closingEditor = false;
+          console.log('✅ Post saved and page refreshed');
         } else {
           alert(`❌ Error saving post: ${result.error}`);
         }
@@ -290,14 +305,17 @@
         goto('/login');
         return;
       }
-      
+
+      // Reset closing flag when opening editor
+      closingEditor = false;
+
       editingPost = {
         id: null,
         title: '',
         content: '',
         category: defaultCategory,
         tags: [],
-        path_id: 1  // Default to root folder
+        path_id: paths.length > 0 ? paths[0].id : null  // Use first available path or null
       };
       showEditor = true;
       setTimeout(initEditor, 100);
@@ -309,14 +327,17 @@
         goto('/login');
         return;
       }
-      
+
       // Check if user can edit this post
       if (post.author_id !== data.user.id && data.user.role !== 'admin') {
         alert('You can only edit your own posts');
         return;
       }
-      
-      editingPost = { 
+
+      // Reset closing flag when opening editor
+      closingEditor = false;
+
+      editingPost = {
         ...post,
         tags: post.tags || []
       };
@@ -325,9 +346,37 @@
     }
     
     function cancelEdit() {
+      // Set flag to prevent reactive statement from reopening editor
+      closingEditor = true;
+
+      // Properly destroy Quill editor to prevent conflicts on next initialization
+      if (quill) {
+        quill = null;
+      }
+
+      // Clear the editor container's content
+      if (editorContainer) {
+        editorContainer.innerHTML = '';
+      }
+
       showEditor = false;
       editingPost = null;
-      quill = null;
+
+      // Check if there's a return URL parameter to go back to where user came from
+      const urlParams = new URLSearchParams(window.location.search);
+      const returnUrl = urlParams.get('return');
+
+      // Clear edit parameter from URL to prevent editor from reopening on refresh
+      if (window.location.search.includes('edit=') || returnUrl) {
+        const destination = returnUrl || '/blog';
+        goto(destination, { replaceState: true }).then(() => {
+          // Reset flag after navigation
+          closingEditor = false;
+        });
+      } else {
+        // Reset flag immediately if no navigation needed
+        closingEditor = false;
+      }
     }
     
     // Reactive search and filtering - remove this old code
@@ -527,9 +576,22 @@
             <option value="all">All Categories</option>
             {#each categories as category}
               <option value={category.category}>
-                {category.category.charAt(0).toUpperCase() + category.category.slice(1)} ({category.count})
+                {category.category.charAt(0).toUpperCase() + category.category.slice(1)} ({category.post_count})
               </option>
             {/each}
+          </select>
+
+          <select bind:value={selectedAuthor} on:change={handleSearch} class="author-filter" disabled={loading}>
+            <option value="all">All Authors</option>
+            {#if authors && authors.length > 0}
+              {#each authors as author}
+                <option value={String(author.id)}>
+                  {author.display_name} ({author.post_count})
+                </option>
+              {/each}
+            {:else}
+              <option disabled>No authors available</option>
+            {/if}
           </select>
         </div>
       </div>
@@ -546,11 +608,11 @@
             <div class="empty-icon">📝</div>
             <h2>No posts found</h2>
             <p>
-              {searchQuery || selectedCategory !== 'all' 
-                ? 'Try adjusting your search or filter' 
+              {searchQuery || selectedCategory !== 'all' || selectedAuthor !== 'all'
+                ? 'Try adjusting your search or filter'
                 : 'Be the first to share your thoughts with the community!'}
             </p>
-            {#if !searchQuery && selectedCategory === 'all' && data.user}
+            {#if !searchQuery && selectedCategory === 'all' && selectedAuthor === 'all' && data.user}
               <button class="btn btn-primary" on:click={createNewPost}>
                 Write the First Post
               </button>
@@ -616,17 +678,17 @@
       </footer>
     {/if}
   </div>
+
+<!-- Report Modal - placed outside blog-container for proper fixed positioning -->
+<ReportModal 
+  isOpen={showReportModal}
+  postTitle={reportPostData.postTitle}
+  postUrl={reportPostData.postUrl}
+  postId={reportPostData.postId}
+  on:close={() => showReportModal = false}
+/>
   
-  <!-- Report Modal -->
-  <ReportModal 
-    isOpen={showReportModal}
-    postTitle={reportPostData.postTitle}
-    postUrl={reportPostData.postUrl}
-    postId={reportPostData.postId}
-    on:close={() => showReportModal = false}
-  />
-  
-  <style>
+<style>
     .blog-container {
       max-width: 1200px;
       margin: 0 auto;
@@ -727,7 +789,15 @@
       font-size: 1rem;
       min-width: 200px;
     }
-    
+
+    .author-filter {
+      padding: 0.75rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      min-width: 200px;
+    }
+
     /* Button Styles */
     .btn {
       padding: 0.75rem 1.5rem;

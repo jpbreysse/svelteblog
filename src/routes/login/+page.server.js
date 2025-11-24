@@ -1,5 +1,5 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { db } from '$lib/db.js';
+import { userDB } from '$lib/db.js';
 import { verifyPassword, createToken } from '$lib/auth.js';
 
 export async function load({ locals }) {
@@ -8,8 +8,6 @@ export async function load({ locals }) {
   }
   return {};
 }
-
-
 
 export const actions = {
   default: async ({ request, cookies }) => {
@@ -35,7 +33,7 @@ export const actions = {
     }
     
     if (Object.keys(fieldErrors).length > 0) {
-      console.log('⚠️ Validation failed:', fieldErrors);
+      console.log('⚠️ Validation failed:', Object.keys(fieldErrors));
       return fail(400, { 
         fieldErrors, 
         email,
@@ -45,7 +43,7 @@ export const actions = {
     
     try {
       // Find user by email
-      const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase());
+      const user = await userDB.getUserByEmail(email);
       
       console.log('👤 User lookup:', user ? `Found (${user.email}, ${user.role}, ${user.status})` : 'Not found');
       
@@ -58,7 +56,7 @@ export const actions = {
         });
       }
       
-      // Check account status with specific messages
+      // Check account status
       if (user.status !== 'approved') {
         let statusMessage;
         
@@ -120,7 +118,7 @@ export const actions = {
       // Don't throw redirect errors
       if (error.status === 303) throw error;
       
-      console.error('💥 Login error:', error);
+      console.error('💥 Login error:', error.message);
       
       // Provide user-friendly error message
       return fail(500, {

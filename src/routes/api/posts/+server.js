@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { blogDB, db } from '$lib/db.js';
+import { blogDB, pool } from '$lib/db.js';
 
 // GET /api/posts - Get all posts, search, or filter by path
 export async function GET({ url, locals }) {
@@ -13,37 +13,32 @@ export async function GET({ url, locals }) {
     
     // Priority order: path_id > userId > search > category > all
     if (pathId) {
-      // Filter by path - use direct SQL query
-      posts = db.prepare(`
-        SELECT p.*, u.display_name,
-          GROUP_CONCAT(t.name) as tags
+      // Filter by path - use async PostgreSQL query
+      const result = await pool.query(`
+        SELECT p.id, p.title, p.excerpt, p.category, p.slug,
+          p.created_at, p.updated_at, p.published, p.read_time,
+          u.id as author_id, u.display_name as author,
+          array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
         FROM posts p
         INNER JOIN users u ON p.author_id = u.id
         LEFT JOIN post_tags pt ON p.id = pt.post_id
         LEFT JOIN tags t ON pt.tag_id = t.id
-        WHERE p.path_id = ? AND p.published = 1
-        GROUP BY p.id
+        WHERE p.path_id = $1 AND p.published = true
+        GROUP BY p.id, u.id
         ORDER BY p.created_at DESC
-      `).all(parseInt(pathId));
-      
-      // Transform to match blogDB format
-      posts = posts.map(post => ({
-        ...post,
-        author: post.display_name,
-        tags: post.tags ? post.tags.split(',') : [],
-        created_at: new Date(post.created_at),
-        updated_at: new Date(post.updated_at)
-      }));
-      
-    } else if (userId && locals.user) {
-      // Get posts by specific user (only if authenticated)
-      posts = blogDB.getPostsByUser(parseInt(userId));
+      `, [parseInt(pathId)]);
+
+      posts = result.rows;
+
+    } else if (userId) {
+      // Get posts by specific user (public access allowed for filtering)
+      posts = await blogDB.getPostsByUser(parseInt(userId));
     } else if (searchQuery) {
-      posts = blogDB.searchPosts(searchQuery, category);
+      posts = await blogDB.searchPosts(searchQuery, category);
     } else if (category && category !== 'all') {
-      posts = blogDB.getPostsByCategory(category);
+      posts = await blogDB.getPostsByCategory(category);
     } else {
-      posts = blogDB.getAllPosts();
+      posts = await blogDB.getAllPosts();
     }
 
     return json({
@@ -52,7 +47,7 @@ export async function GET({ url, locals }) {
       count: posts.length
     });
   } catch (error) {
-    console.error('Error fetching posts:', error);
+    console.error('❌ Error fetching posts:', error);
     return json({
       success: false,
       error: error.message
@@ -127,16 +122,33 @@ export async function POST({ request, locals }) {
     }
     
     console.log('🔄 Creating post:', postData.title, 'for user:', locals.user.id);
-    const post = blogDB.createPost(postData, locals.user.id);
-    console.log('✅ Post created with ID:', post.id);
+    console.log('   path_id:', postData.path_id || 'null (no path)');
     
+    const result = await blogDB.createPost(postData, locals.user.id);
+    console.log('✅ Post created with ID:', result.post.id);
+
+    // Update tags if provided
+    if (postData.tags && Array.isArray(postData.tags) && postData.tags.length > 0) {
+      await blogDB.updatePostTags(result.post.id, postData.tags);
+      console.log('✅ Tags updated for post:', result.post.id);
+    }
+
     return json({
       success: true,
-      post,
+      post: result.post,
       message: 'Post created successfully'
     }, { status: 201 });
   } catch (error) {
-    console.error('Error creating post:', error);
+    console.error('❌ Error creating post:', error.message);
+    
+    // Check if it's a foreign key constraint error
+    if (error.code === '23503') {
+      return json({
+        success: false,
+        error: `Invalid reference: ${error.detail}. Make sure the path exists before creating a post.`
+      }, { status: 400 });
+    }
+    
     return json({
       success: false,
       error: error.message

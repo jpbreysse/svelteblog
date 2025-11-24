@@ -24,8 +24,26 @@ export async function POST({ params, request, locals }) {
       return json({ error: 'Invalid new parent ID' }, { status: 400 });
     }
 
-    // Move the path
-    const movedPath = pathsDB.movePath(pathId, newParentId);
+    // Get current path info
+    const path = await pathsDB.getPathById(pathId);
+    if (!path) {
+      return json({ error: 'Path not found' }, { status: 404 });
+    }
+
+    // Move the path by updating parent_id - MUST AWAIT
+    const moveData = {
+      name: path.name,
+      parent_id: newParentId,
+      description: path.description,
+      icon: path.icon,
+      color: path.color,
+      position: path.position
+    };
+    
+    await pathsDB.updatePath(pathId, moveData);
+    
+    // Get updated path
+    const movedPath = await pathsDB.getPathById(pathId);
 
     return json({
       success: true,
@@ -34,7 +52,7 @@ export async function POST({ params, request, locals }) {
     });
 
   } catch (error) {
-    console.error('Error moving path:', error);
+    console.error('❌ Error moving path:', error.message);
     return json({ error: error.message }, { status: 400 });
   }
 }

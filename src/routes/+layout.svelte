@@ -33,16 +33,19 @@
 	  {#if data.user}
 		<!-- Links for logged-in users -->
 		<a href="/blog" class:active={$page.url.pathname === '/blog'}>📝 Blog</a>
+		<a href="/explorer" class:active={$page.url.pathname === '/explorer'}>🔍 Explorer</a>
 		<a href="/about" class:active={$page.url.pathname === '/about'}>ℹ️ About</a>
 		<span class="user-info">Welcome, {data.user.display_name}!</span>
 		<a href="/profile" class:active={$page.url.pathname === '/profile'}>👤 Profile</a>
 		{#if data.user.role === 'admin'}
 		  <a href="/admin" class:active={$page.url.pathname === '/admin'}>⚙️ Admin Panel</a>
+		  <a href="/admin/paths" class:active={$page.url.pathname === '/admin/paths'}>📁 Paths</a>
 		{/if}
 		<button on:click={logout} class="logout-btn">🚪 Logout</button>
 	  {:else}
 		<!-- Links for non-logged-in users -->
 		<a href="/blog" class:active={$page.url.pathname === '/blog'}>📝 Blog</a>
+		<a href="/explorer" class:active={$page.url.pathname === '/explorer'}>🔍 Explorer</a>
 		<a href="/about" class:active={$page.url.pathname === '/about'}>ℹ️ About</a>
 		<a href="/login" class:active={$page.url.pathname === '/login'}>🔐 Sign In</a>
 		<a href="/register" class:active={$page.url.pathname === '/register'}>📝 Register</a>
