@@ -15,9 +15,15 @@ import { pool } from '$lib/db.js';
  * Check if user can read a specific post
  * @param {number} postId - Post ID
  * @param {number|null} userId - User ID (null for anonymous)
+ * @param {string} userRole - User role ('user' or 'admin')
  * @returns {Promise<boolean>}
  */
-export async function canReadPost(postId, userId = null) {
+export async function canReadPost(postId, userId = null, userRole = 'user') {
+  // Admins can read everything
+  if (userRole === 'admin') {
+    return true;
+  }
+
   const result = await pool.query(`
     SELECT p.id
     FROM posts p

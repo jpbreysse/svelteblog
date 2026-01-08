@@ -84,7 +84,8 @@ export async function GET({ params, url, locals }) {
 
     // Check if user has permission to read this post
     const userId = locals.user?.id || null;
-    const canRead = await canReadPost(postId, userId);
+    const userRole = locals.user?.role || 'user';
+    const canRead = await canReadPost(postId, userId, userRole);
 
     if (!canRead) {
       return json({

@@ -15,7 +15,8 @@ export async function load({ params, locals }) {
 
   // Check if user has permission to read this post
   const userId = locals.user?.id || null;
-  const canRead = await canReadPost(post.id, userId);
+  const userRole = locals.user?.role || 'user';
+  const canRead = await canReadPost(post.id, userId, userRole);
 
   if (!canRead) {
     throw error(403, {

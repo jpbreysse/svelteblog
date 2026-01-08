@@ -42,10 +42,11 @@ export async function load({ url, locals }) {
 
     // Filter posts based on read permissions
     const userId = locals.user?.id || null;
+    const userRole = locals.user?.role || 'user';
     const filteredPosts = [];
 
     for (const post of posts) {
-      const canRead = await canReadPost(post.id, userId);
+      const canRead = await canReadPost(post.id, userId, userRole);
       if (canRead) {
         filteredPosts.push(post);
       }
