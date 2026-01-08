@@ -79,6 +79,9 @@
         📝 Posts Management
         <span class="info-badge">{data.postStats?.total || 0} posts</span>
       </a>
+      <a href="/admin/groups" class="nav-link groups-link">
+        👥 Groups Management
+      </a>
       <a href="/admin/reports" class="nav-link reports-link">
         📝 Content Reports
         {#if data.reportStats && data.reportStats.pending > 0}
@@ -274,9 +277,17 @@
   .nav-link.posts-link {
     background: #059669;
   }
-  
+
   .nav-link.posts-link:hover {
     background: #047857;
+  }
+
+  .nav-link.groups-link {
+    background: #7c3aed;
+  }
+
+  .nav-link.groups-link:hover {
+    background: #6d28d9;
   }
 
     .badge {

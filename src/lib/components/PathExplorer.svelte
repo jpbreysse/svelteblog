@@ -315,7 +315,12 @@ async function handlePathSelect(event) {
                     <div class="post-header">
                       <div class="post-title-wrapper">
                         <h4 class="post-title">
-                          <a href="/blog/{post.slug}">{post.title}</a>
+                          <a href="/blog/{post.slug}">
+                            {#if post.category_post_number && post.category}
+                              <span class="title-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}:</span>
+                            {/if}
+                            {post.title}
+                          </a>
                         </h4>
                       </div>
                       <div class="post-actions">
@@ -760,7 +765,14 @@ async function handlePathSelect(event) {
     .post-title a:hover {
       color: #6366f1;
     }
-    
+
+    .title-prefix {
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 0.9em;
+      margin-right: 0.5rem;
+    }
+
     .icon-btn {
       background: transparent;
       border: 1px solid transparent;

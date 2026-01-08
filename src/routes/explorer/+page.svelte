@@ -1,5 +1,5 @@
 <script>
-    import PathExplorer from '$lib/components/PathExplorer.svelte';
+    import ConfluenceExplorer from '$lib/components/ConfluenceExplorer.svelte';
 
     export let data;
   </script>
@@ -8,4 +8,4 @@
     <title>Content Explorer</title>
   </svelte:head>
 
-  <PathExplorer showPostsList={true} user={data.user} />
+  <ConfluenceExplorer user={data.user} />

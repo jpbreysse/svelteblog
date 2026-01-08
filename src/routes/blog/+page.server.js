@@ -1,6 +1,7 @@
 import { blogDB, pathsDB } from '$lib/db.js';
+import { canReadPost } from '$lib/server/permissions.js';
 
-export async function load({ url }) {
+export async function load({ url, locals }) {
   try {
     console.log('🔍 Blog page loading...', new Date().toISOString());
     
@@ -39,18 +40,31 @@ export async function load({ url }) {
 
     console.log('📄 Posts loaded:', posts.length);
 
+    // Filter posts based on read permissions
+    const userId = locals.user?.id || null;
+    const filteredPosts = [];
+
+    for (const post of posts) {
+      const canRead = await canReadPost(post.id, userId);
+      if (canRead) {
+        filteredPosts.push(post);
+      }
+    }
+
+    console.log('📄 Posts after permission filter:', filteredPosts.length, '/', posts.length);
+
     // Load categories, authors, and stats
     // ✅ FIXED: Added await
     const categories = await blogDB.getCategories();
     const authors = await blogDB.getAuthors();
     const stats = await blogDB.getStats();
-    
+
     // Load paths for folder selection
     // ✅ FIXED: Replaced db.prepare() with pathsDB.getAllPaths()
     const paths = await pathsDB.getAllPaths();
-    
+
     return {
-      posts,
+      posts: filteredPosts,
       categories,
       authors,
       stats,

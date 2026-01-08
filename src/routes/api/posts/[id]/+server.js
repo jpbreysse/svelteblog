@@ -1,5 +1,29 @@
 import { json } from '@sveltejs/kit';
 import { blogDB } from '$lib/db.js';
+import { setPostPermissions, canWritePost, canReadPost } from '$lib/server/permissions.js';
+
+// Helper function to strip HTML tags and decode entities
+function stripHtml(html) {
+  if (!html) return '';
+
+  // Remove HTML tags
+  let text = html.replace(/<[^>]*>/g, '');
+
+  // Decode common HTML entities
+  text = text
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'");
+
+  // Clean up extra whitespace
+  text = text.replace(/\s+/g, ' ').trim();
+
+  return text;
+}
 
 // Validation constants (server-side safety limits)
 const VALIDATION_LIMITS = {
@@ -45,10 +69,12 @@ function validatePostData(postData) {
 }
 
 // GET /api/posts/[id] - Get single post
-export async function GET({ params }) {
+// Supports ?format=text to return plain text instead of HTML
+export async function GET({ params, url, locals }) {
   try {
-    const post = await blogDB.getPostById(parseInt(params.id));
-    
+    const postId = parseInt(params.id);
+    const post = await blogDB.getPostById(postId);
+
     if (!post) {
       return json({
         success: false,
@@ -56,9 +82,43 @@ export async function GET({ params }) {
       }, { status: 404 });
     }
 
+    // Check if user has permission to read this post
+    const userId = locals.user?.id || null;
+    const canRead = await canReadPost(postId, userId);
+
+    if (!canRead) {
+      return json({
+        success: false,
+        error: 'You do not have permission to view this post'
+      }, { status: 403 });
+    }
+
+    // Check if user wants plain text format
+    const format = url.searchParams.get('format');
+
+    if (format === 'text') {
+      // Return plain text version
+      const postWithText = {
+        ...post,
+        content_text: stripHtml(post.content),  // Plain text version
+        content_html: post.content               // Keep original HTML
+      };
+
+      // Replace content with text version
+      postWithText.content = postWithText.content_text;
+
+      return json({
+        success: true,
+        post: postWithText,
+        format: 'text'
+      });
+    }
+
+    // Default: return HTML version
     return json({
       success: true,
-      post
+      post,
+      format: 'html'
     });
   } catch (error) {
     console.error('❌ Error fetching post:', {
@@ -83,7 +143,12 @@ export async function PUT({ params, request, locals }) {
 
   try {
     const postData = await request.json();
-    
+    const postId = parseInt(params.id);
+
+    console.log('📝 PUT /api/posts/' + postId);
+    console.log('   User:', locals.user.id, '-', locals.user.email);
+    console.log('   Role:', locals.user.role);
+
     // Server-side validation (basic safety checks)
     const validationErrors = validatePostData(postData);
     if (validationErrors.length > 0) {
@@ -94,14 +159,40 @@ export async function PUT({ params, request, locals }) {
         validationErrors
       }, { status: 400 });
     }
-    
+
+    // Check if user has permission to write to this post
+    const canWrite = await canWritePost(postId, locals.user.id, locals.user.role);
+    if (!canWrite) {
+      console.log('❌ User', locals.user.id, 'does not have write permission for post', postId);
+      return json({
+        success: false,
+        error: 'You do not have permission to edit this post'
+      }, { status: 403 });
+    }
+
+    console.log('✅ Permission check passed, proceeding with update');
+
     const isAdmin = locals.user.role === 'admin';
-    const post = await blogDB.updatePost(parseInt(params.id), postData, locals.user.id, isAdmin);
+    const post = await blogDB.updatePost(postId, postData, locals.user.id, isAdmin);
 
     // Update tags if provided
     if (postData.tags && Array.isArray(postData.tags)) {
       await blogDB.updatePostTags(parseInt(params.id), postData.tags);
       console.log('✅ Tags updated for post:', params.id);
+    }
+
+    // Update permissions if visibility is 'groups'
+    if (postData.visibility === 'groups') {
+      await setPostPermissions(
+        parseInt(params.id),
+        postData.readGroupIds || [],
+        postData.writeGroupIds || []
+      );
+      console.log('✅ Permissions updated for post:', params.id);
+    } else if (postData.visibility) {
+      // If visibility changed from 'groups' to something else, clear permissions
+      await setPostPermissions(parseInt(params.id), [], []);
+      console.log('✅ Permissions cleared for post:', params.id);
     }
 
     return json({
@@ -155,7 +246,7 @@ export async function PATCH({ params, request, locals }) {
   try {
     const updates = await request.json();
     const postId = parseInt(params.id);
-    
+
     // Get the existing post
     const existingPost = await blogDB.getPostById(postId);
     if (!existingPost) {
@@ -164,12 +255,14 @@ export async function PATCH({ params, request, locals }) {
         error: 'Post not found'
       }, { status: 404 });
     }
-    
-    // Check authorization
-    if (existingPost.author_id !== locals.user.id && locals.user.role !== 'admin') {
+
+    // Check if user has permission to write to this post
+    const canWrite = await canWritePost(postId, locals.user.id, locals.user.role);
+    if (!canWrite) {
+      console.log('❌ User', locals.user.id, 'does not have write permission for post', postId);
       return json({
         success: false,
-        error: 'Unauthorized to modify this post'
+        error: 'You do not have permission to modify this post'
       }, { status: 403 });
     }
     
@@ -227,7 +320,17 @@ export async function DELETE({ params, locals }) {
 
   try {
     console.log(`🗑️ DELETE /api/posts/${postId} - User: ${locals.user.email} (admin: ${isAdmin})`);
-    
+
+    // Check if user has permission to write (delete) this post
+    const canWrite = await canWritePost(postId, locals.user.id, locals.user.role);
+    if (!canWrite) {
+      console.log('❌ User', locals.user.id, 'does not have write permission for post', postId);
+      return json({
+        success: false,
+        error: 'You do not have permission to delete this post'
+      }, { status: 403 });
+    }
+
     const result = await blogDB.deletePost(postId, locals.user.id, isAdmin);
     
     if (!result.success) {

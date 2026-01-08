@@ -327,7 +327,12 @@
               
               <td class="category-cell">
                 <span class="category-badge">
-                  {post.category.charAt(0).toUpperCase() + post.category.slice(1)}
+                  {#if post.category_post_number}
+                    <span class="category-prefix">{post.category.substring(0, 3).toUpperCase()}</span>
+                    #{post.category_post_number}
+                  {:else}
+                    {post.category.charAt(0).toUpperCase() + post.category.slice(1)}
+                  {/if}
                 </span>
               </td>
               
@@ -673,9 +678,15 @@
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
     font-size: 0.75rem;
-    font-weight: 500;
+    font-weight: 600;
   }
-  
+
+  .category-prefix {
+    font-weight: 700;
+    color: #3730a3;
+    margin-right: 0.15rem;
+  }
+
   .status-toggle {
     border: none;
     padding: 0.25rem 0.75rem;

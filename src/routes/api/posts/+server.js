@@ -1,5 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { blogDB, pool } from '$lib/db.js';
+import { setPostPermissions } from '$lib/server/permissions.js';
 
 // GET /api/posts - Get all posts, search, or filter by path
 export async function GET({ url, locals }) {
@@ -131,6 +132,16 @@ export async function POST({ request, locals }) {
     if (postData.tags && Array.isArray(postData.tags) && postData.tags.length > 0) {
       await blogDB.updatePostTags(result.post.id, postData.tags);
       console.log('✅ Tags updated for post:', result.post.id);
+    }
+
+    // Set permissions if visibility is 'groups'
+    if (postData.visibility === 'groups') {
+      await setPostPermissions(
+        result.post.id,
+        postData.readGroupIds || [],
+        postData.writeGroupIds || []
+      );
+      console.log('✅ Permissions set for post:', result.post.id);
     }
 
     return json({

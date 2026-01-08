@@ -5,6 +5,7 @@
     import { invalidateAll, invalidate } from '$app/navigation';
     import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     import ReportModal from '$lib/components/ReportModal.svelte';
+    import PostPermissions from '$lib/components/PostPermissions.svelte';
     import { getCategories, getDefaultCategory } from '$lib/categories';
     
     export let data;
@@ -37,7 +38,23 @@
     let editorContainer;
     let loading = false;
     let closingEditor = false; // Flag to prevent reactive reopening after save/cancel
-    
+    let userGroups = []; // User's groups for permissions
+
+    // Compute which posts the user can edit (reactive to userGroups changes)
+    $: editablePosts = new Set(
+      posts
+        .filter(post => {
+          if (!data.user) return false;
+          if (post.author_id === data.user.id || data.user.role === 'admin') return true;
+          if (post.visibility === 'groups' && userGroups.length > 0) return true;
+          return false;
+        })
+        .map(post => post.id)
+    );
+
+    // Log when editablePosts changes
+    $: console.log('🔄 Editable posts updated:', editablePosts.size, 'posts can be edited');
+
     // Report modal state
     let showReportModal = false;
     let reportPostData = {};
@@ -62,6 +79,56 @@
     onMount(async () => {
       // No need to load posts on client-side anymore
       // Data is already loaded server-side
+
+      // Check for new post creation from URL parameter
+      const urlParams = new URLSearchParams(window.location.search);
+      const isNewPost = urlParams.get('new') === 'true';
+      const pathId = urlParams.get('path_id');
+
+      if (isNewPost && data.user) {
+        // Create a new empty post
+        const selectedPathId = pathId ? parseInt(pathId) : null;
+
+        editingPost = {
+          id: null,
+          title: '',
+          content: '',
+          excerpt: '',
+          category: defaultCategory,
+          tags: [],
+          path_id: selectedPathId,
+          published: false,
+          visibility: 'public',
+          readGroupIds: [],
+          writeGroupIds: []
+        };
+        showEditor = true;
+        setTimeout(initEditor, 100);
+
+        // Clear the new=true parameter from URL but keep return and path_id
+        const newUrl = new URL(window.location);
+        newUrl.searchParams.delete('new');
+        window.history.replaceState({}, '', newUrl);
+      }
+
+      // Load user's groups for permissions
+      if (data.user) {
+        try {
+          console.log('📡 Fetching groups for user:', data.user);
+          const groupsResponse = await fetch('/api/groups/my-groups');
+          console.log('📡 Response status:', groupsResponse.status);
+          const groupsData = await groupsResponse.json();
+          console.log('📡 Response data:', groupsData);
+          if (groupsData.success) {
+            userGroups = groupsData.groups || [];
+            console.log('✅ Loaded user groups:', userGroups);
+          } else {
+            console.error('❌ API returned error:', groupsData.error);
+          }
+        } catch (error) {
+          console.error('❌ Failed to load groups:', error);
+        }
+      }
     });
     
     // Function to handle search form submission
@@ -175,7 +242,10 @@
           content: editingPost.content,
           category: editingPost.category,
           tags: editingPost.tags || [],
-          path_id: editingPost.path_id || null  // Use null if no path selected
+          path_id: editingPost.path_id || null,  // Use null if no path selected
+          visibility: editingPost.visibility || 'public',
+          readGroupIds: editingPost.readGroupIds || [],
+          writeGroupIds: editingPost.writeGroupIds || []
         };
         
         let response;
@@ -315,31 +385,55 @@
         content: '',
         category: defaultCategory,
         tags: [],
-        path_id: paths.length > 0 ? paths[0].id : null  // Use first available path or null
+        path_id: paths.length > 0 ? paths[0].id : null,  // Use first available path or null
+        visibility: 'public',
+        readGroupIds: [],
+        writeGroupIds: []
       };
       showEditor = true;
       setTimeout(initEditor, 100);
     }
     
-    function editPost(post) {
+    async function editPost(post) {
       if (!data.user) {
         alert('You must be logged in to edit posts');
         goto('/login');
         return;
       }
 
-      // Check if user can edit this post
-      if (post.author_id !== data.user.id && data.user.role !== 'admin') {
-        alert('You can only edit your own posts');
-        return;
-      }
+      // Permission check removed - server will validate using group permissions
+      // For group-based posts, users in write groups can edit
 
       // Reset closing flag when opening editor
       closingEditor = false;
 
+      // Load post permissions
+      let readGroupIds = [];
+      let writeGroupIds = [];
+
+      if (post.id) {
+        try {
+          console.log('📡 Loading permissions for post:', post.id);
+          const permResponse = await fetch(`/api/posts/${post.id}/permissions`);
+          const permData = await permResponse.json();
+          console.log('📡 Permissions data:', permData);
+
+          if (permData.success) {
+            readGroupIds = permData.readGroups || [];
+            writeGroupIds = permData.writeGroups || [];
+            console.log('✅ Loaded permissions - read:', readGroupIds, 'write:', writeGroupIds);
+          }
+        } catch (error) {
+          console.error('❌ Failed to load permissions:', error);
+        }
+      }
+
       editingPost = {
         ...post,
-        tags: post.tags || []
+        tags: post.tags || [],
+        visibility: post.visibility || 'public',
+        readGroupIds,
+        writeGroupIds
       };
       showEditor = true;
       setTimeout(initEditor, 100);
@@ -402,7 +496,12 @@
     }
     
     function canEditPost(post) {
-      return data.user && (post.author_id === data.user.id || data.user.role === 'admin');
+      // Use the reactive editablePosts Set
+      const canEdit = editablePosts.has(post.id);
+      if (!canEdit && post.visibility === 'groups') {
+        console.log('Cannot edit group post:', post.id, 'userGroups:', userGroups.length);
+      }
+      return canEdit;
     }
     
     // Format path for display with hierarchy
@@ -487,6 +586,7 @@
           
           <div class="input-group">
             <select bind:value={editingPost.path_id} class="path-select" disabled={loading}>
+              <option value={null}>📂 No folder (root level)</option>
               {#each paths as path}
                 <option value={path.id}>
                   📁 {path.full_path || path.name}
@@ -495,8 +595,16 @@
             </select>
             <div class="path-label">Folder</div>
           </div>
+
+          <!-- Permissions Component -->
+          <PostPermissions
+            bind:visibility={editingPost.visibility}
+            bind:readGroupIds={editingPost.readGroupIds}
+            bind:writeGroupIds={editingPost.writeGroupIds}
+            availableGroups={userGroups}
+          />
         </div>
-        
+
         <div class="editor-wrapper">
           <div class="editor-header-info">
             <span class="content-counter" class:warning={getContentLength() > VALIDATION_LIMITS.content.warning}>
@@ -623,9 +731,14 @@
             {#each posts as post (post.id)}
               <article class="post-card">
                 <div class="post-header">
-                  <h2 class="post-title">{post.title}</h2>
+                  <h2 class="post-title">
+                    {#if post.category_post_number}
+                      <span class="title-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}:</span>
+                    {/if}
+                    {post.title}
+                  </h2>
                   <div class="post-actions">
-                    {#if canEditPost(post)}
+                    {#if editablePosts.has(post.id)}
                       <button class="action-btn" on:click={() => editPost(post)} title="Edit" disabled={loading}>
                         ✏️
                       </button>
@@ -635,7 +748,7 @@
                     {/if}
                   </div>
                 </div>
-                
+
                 <div class="post-meta">
                   <span class="author">👤 {post.author}</span>
                   <span class="date">{formatDate(post.created_at)}</span>
@@ -870,7 +983,14 @@
       margin: 0;
       flex: 1;
     }
-    
+
+    .title-prefix {
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 0.9em;
+      margin-right: 0.5rem;
+    }
+
     .post-actions {
       display: flex;
       gap: 0.5rem;
@@ -901,7 +1021,13 @@
       color: #6b7280;
       margin-bottom: 1rem;
     }
-    
+
+    .post-number {
+      font-weight: 600;
+      color: #2563eb;
+      margin-left: 0.25rem;
+    }
+
     .post-excerpt {
       color: #4b5563;
       line-height: 1.6;

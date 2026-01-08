@@ -39,6 +39,7 @@
 		<a href="/profile" class:active={$page.url.pathname === '/profile'}>👤 Profile</a>
 		{#if data.user.role === 'admin'}
 		  <a href="/admin" class:active={$page.url.pathname === '/admin'}>⚙️ Admin Panel</a>
+		  <a href="/admin/groups" class:active={$page.url.pathname.startsWith('/admin/groups')}>👥 Groups</a>
 		  <a href="/admin/paths" class:active={$page.url.pathname === '/admin/paths'}>📁 Paths</a>
 		{/if}
 		<button on:click={logout} class="logout-btn">🚪 Logout</button>

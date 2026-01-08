@@ -100,8 +100,8 @@ export const blogDB = {
   async getAllPosts() {
     const result = await pool.query(`
       SELECT
-        p.id, p.title, p.content, p.excerpt, p.category, p.slug,
-        p.read_time, p.created_at, p.updated_at, p.published,
+        p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility,
         u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
@@ -124,8 +124,8 @@ export const blogDB = {
   async getPostsByUser(userId) {
     const result = await pool.query(`
       SELECT
-        p.id, p.title, p.content, p.excerpt, p.category, p.slug,
-        p.read_time, p.created_at, p.updated_at, p.published,
+        p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility,
         u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
@@ -195,39 +195,63 @@ export const blogDB = {
    */
   async createPost(postData, authorId) {
     const { title, content, category = 'thoughts', path_id = null } = postData;
-    
+
     // Generate slug, read_time, and excerpt
     const slug = generateSlug(title);
     const read_time = calculateReadTime(content);
     const excerpt = generateExcerpt(content);
 
-    const result = await pool.query(`
-      INSERT INTO posts (
-        title, content, excerpt, category, slug, read_time, 
-        author_id, path_id, published
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
-      RETURNING id, title, slug, created_at
-    `, [title, content, excerpt, category, slug, read_time, authorId, path_id]);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-    if (result.rowCount === 0) {
-      throw new Error('Failed to create post');
+      // Get the next category post number
+      const numberResult = await client.query(`
+        SELECT COALESCE(MAX(category_post_number), 0) + 1 as next_num
+        FROM posts
+        WHERE category = $1
+      `, [category]);
+      const categoryPostNumber = numberResult.rows[0].next_num;
+
+      // Insert the post with the assigned number
+      const visibility = postData.visibility || 'public';
+      const result = await client.query(`
+        INSERT INTO posts (
+          title, content, excerpt, category, category_post_number, slug, read_time,
+          author_id, path_id, published, visibility
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)
+        RETURNING id, title, slug, category_post_number, created_at
+      `, [title, content, excerpt, category, categoryPostNumber, slug, read_time, authorId, path_id, visibility]);
+
+      await client.query('COMMIT');
+
+      if (result.rowCount === 0) {
+        throw new Error('Failed to create post');
+      }
+
+      return {
+        success: true,
+        post: result.rows[0]
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
     }
-
-    return {
-      success: true,
-      post: result.rows[0]
-    };
   },
 
   /**
    * Update existing post
    * @param {number} id - Post ID
    * @param {Object} postData - Updated data
-   * @param {number} authorId - User ID (for authorization)
-   * @param {boolean} isAdmin - Whether user is admin
+   * @param {number} authorId - User ID (for backward compatibility, not used for permission check)
+   * @param {boolean} isAdmin - Whether user is admin (for backward compatibility, not used for permission check)
+   * @param {boolean} skipPermissionCheck - Skip permission check (default: true, permissions checked in API layer)
    * @returns {Promise<Object>} Success message
+   * @note Permission checks should be done in the API layer using canWritePost()
    */
-  async updatePost(id, postData, authorId, isAdmin = false) {
+  async updatePost(id, postData, authorId, isAdmin = false, skipPermissionCheck = true) {
     // Verify post exists
     const postResult = await pool.query(
       'SELECT author_id FROM posts WHERE id = $1',
@@ -239,26 +263,27 @@ export const blogDB = {
       throw new Error('Post not found');
     }
 
-    // Convert both to numbers for comparison (handle string IDs from requests)
-    const postAuthorId = parseInt(post.author_id);
-    const userId = parseInt(authorId);
+    // Permission check (legacy - should be done in API layer)
+    if (!skipPermissionCheck) {
+      const postAuthorId = parseInt(post.author_id);
+      const userId = parseInt(authorId);
 
-    // Allow if user is author OR admin
-    if (postAuthorId !== userId && !isAdmin) {
-      throw new Error(`You can only edit your own posts (post author: ${postAuthorId}, user: ${userId})`);
+      if (postAuthorId !== userId && !isAdmin) {
+        throw new Error(`You can only edit your own posts (post author: ${postAuthorId}, user: ${userId})`);
+      }
     }
 
     // Update the post
-    const { title, content, category, path_id } = postData;
+    const { title, content, category, path_id, visibility } = postData;
     const read_time = calculateReadTime(content);
     const excerpt = generateExcerpt(content);
 
     const result = await pool.query(`
-      UPDATE posts 
-      SET title = $1, content = $2, excerpt = $3, category = $4, 
-          read_time = $5, path_id = $6, updated_at = NOW()
-      WHERE id = $7
-    `, [title, content, excerpt, category, read_time, path_id, id]);
+      UPDATE posts
+      SET title = $1, content = $2, excerpt = $3, category = $4,
+          read_time = $5, path_id = $6, visibility = $7, updated_at = NOW()
+      WHERE id = $8
+    `, [title, content, excerpt, category, read_time, path_id, visibility || 'public', id]);
 
     if (result.rowCount === 0) {
       throw new Error('Failed to update post');
@@ -270,11 +295,13 @@ export const blogDB = {
   /**
    * Delete post
    * @param {number} id - Post ID
-   * @param {number} authorId - User ID (for authorization)
-   * @param {boolean} isAdmin - Whether user is admin
+   * @param {number} authorId - User ID (for backward compatibility, not used for permission check)
+   * @param {boolean} isAdmin - Whether user is admin (for backward compatibility, not used for permission check)
+   * @param {boolean} skipPermissionCheck - Skip permission check (default: true, permissions checked in API layer)
    * @returns {Promise<Object>} Success message
+   * @note Permission checks should be done in the API layer using canWritePost()
    */
-  async deletePost(id, authorId, isAdmin = false) {
+  async deletePost(id, authorId, isAdmin = false, skipPermissionCheck = true) {
     // Verify post exists
     const postResult = await pool.query(
       'SELECT author_id FROM posts WHERE id = $1',
@@ -286,13 +313,14 @@ export const blogDB = {
       throw new Error('Post not found');
     }
 
-    // Convert both to numbers for comparison (handle string IDs from requests)
-    const postAuthorId = parseInt(post.author_id);
-    const userId = parseInt(authorId);
+    // Permission check (legacy - should be done in API layer)
+    if (!skipPermissionCheck) {
+      const postAuthorId = parseInt(post.author_id);
+      const userId = parseInt(authorId);
 
-    // Allow if user is author OR admin
-    if (postAuthorId !== userId && !isAdmin) {
-      throw new Error('You can only delete your own posts');
+      if (postAuthorId !== userId && !isAdmin) {
+        throw new Error('You can only delete your own posts');
+      }
     }
 
     // Delete post (cascade will delete tags via foreign key)
@@ -362,18 +390,18 @@ export const blogDB = {
    */
   async searchPosts(query, category = null) {
     let sql = `
-      SELECT 
-        p.id, p.title, p.excerpt, p.category, p.slug,
-        p.created_at, u.display_name as author,
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility,
+        p.created_at, u.id as author_id, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.published = true 
+      WHERE p.published = true
         AND (p.title ILIKE $1 OR p.content ILIKE $1 OR p.excerpt ILIKE $1)
     `;
-    
+
     const params = [`%${query}%`];
 
     if (category) {
@@ -394,9 +422,9 @@ export const blogDB = {
    */
   async getPostsByCategory(category) {
     const result = await pool.query(`
-      SELECT 
-        p.id, p.title, p.excerpt, p.category, p.slug,
-        p.created_at, u.display_name as author,
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility,
+        p.created_at, u.id as author_id, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
@@ -470,6 +498,114 @@ export const blogDB = {
         (SELECT COUNT(*) FROM content_reports WHERE status = 'pending') as pending_reports
     `);
     return result.rows[0];
+  },
+
+  /**
+   * Get post hierarchy tree (for Explorer view)
+   * @param {number} pathId - Optional path filter
+   * @returns {Promise<Array>} Hierarchical tree of posts
+   */
+  async getPostHierarchy(pathId = null) {
+    const params = [];
+    let pathFilter = '';
+
+    if (pathId !== null) {
+      pathFilter = 'AND p.path_id = $1';
+      params.push(pathId);
+    }
+
+    const result = await pool.query(`
+      WITH RECURSIVE post_tree AS (
+        -- Root posts (no parent)
+        SELECT
+          p.id, p.title, p.slug, p.parent_id, p.level, p.position,
+          p.category, p.category_post_number, p.author_id, p.created_at,
+          u.display_name as author,
+          ARRAY[p.id] as path_ids,
+          0 as depth,
+          (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        WHERE p.parent_id IS NULL
+          AND p.published = true
+          ${pathFilter}
+
+        UNION ALL
+
+        -- Child posts (recursive)
+        SELECT
+          p.id, p.title, p.slug, p.parent_id, p.level, p.position,
+          p.category, p.category_post_number, p.author_id, p.created_at,
+          u.display_name as author,
+          pt.path_ids || p.id,
+          pt.depth + 1,
+          (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        INNER JOIN post_tree pt ON p.parent_id = pt.id
+        WHERE p.published = true
+          AND pt.depth < 4  -- Max depth to prevent infinite loops
+      )
+      SELECT * FROM post_tree
+      ORDER BY depth, position, created_at
+    `, params);
+
+    return result.rows;
+  },
+
+  /**
+   * Get post with children (for displaying in content area)
+   * @param {number} postId - Post ID
+   * @returns {Promise<Object|null>} Post with children array
+   */
+  async getPostWithChildren(postId) {
+    // Get the post
+    const post = await this.getPostById(postId);
+    if (!post) return null;
+
+    // Get direct children
+    const childrenResult = await pool.query(`
+      SELECT
+        p.id, p.title, p.slug, p.excerpt, p.category, p.category_post_number,
+        p.level, p.position,
+        u.display_name as author,
+        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.parent_id = $1 AND p.published = true
+      ORDER BY p.position ASC, p.created_at ASC
+    `, [postId]);
+
+    post.children = childrenResult.rows;
+    return post;
+  },
+
+  /**
+   * Get breadcrumb trail for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Array of parent posts
+   */
+  async getPostBreadcrumbs(postId) {
+    const result = await pool.query(`
+      WITH RECURSIVE breadcrumb_trail AS (
+        -- Start with the current post
+        SELECT id, title, slug, parent_id, 0 as depth
+        FROM posts
+        WHERE id = $1
+
+        UNION ALL
+
+        -- Get parent posts
+        SELECT p.id, p.title, p.slug, p.parent_id, bt.depth + 1
+        FROM posts p
+        INNER JOIN breadcrumb_trail bt ON p.id = bt.parent_id
+      )
+      SELECT id, title, slug
+      FROM breadcrumb_trail
+      ORDER BY depth DESC
+    `, [postId]);
+
+    return result.rows;
   }
 };
 
@@ -810,6 +946,219 @@ export const userDB = {
       userEmail: user.email,
       displayName: user.display_name
     };
+  }
+};
+
+// ============================================
+// GROUP Management Database Operations
+// ============================================
+
+export const groupDB = {
+  /**
+   * Get all groups
+   * @returns {Promise<Array>} All groups with member counts
+   */
+  async getAllGroups() {
+    const result = await pool.query(`
+      SELECT g.*,
+             COUNT(ug.user_id) as member_count
+      FROM groups g
+      LEFT JOIN user_groups ug ON g.id = ug.group_id
+      GROUP BY g.id
+      ORDER BY g.name ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get group by ID
+   * @param {number} id - Group ID
+   * @returns {Promise<Object|null>} Group object or null
+   */
+  async getGroupById(id) {
+    const result = await pool.query(`
+      SELECT g.*,
+             COUNT(ug.user_id) as member_count
+      FROM groups g
+      LEFT JOIN user_groups ug ON g.id = ug.group_id
+      WHERE g.id = $1
+      GROUP BY g.id
+    `, [id]);
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new group
+   * @param {Object} groupData - Group data (name, description)
+   * @returns {Promise<Object>} Created group with ID
+   */
+  async createGroup(groupData) {
+    const { name, description } = groupData;
+
+    const result = await pool.query(`
+      INSERT INTO groups (name, description)
+      VALUES ($1, $2)
+      RETURNING id, name, description, created_at
+    `, [name, description]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create group');
+    }
+
+    return {
+      success: true,
+      group: result.rows[0]
+    };
+  },
+
+  /**
+   * Update group
+   * @param {number} id - Group ID
+   * @param {Object} groupData - Updated data (name, description)
+   * @returns {Promise<Object>} Success message
+   */
+  async updateGroup(id, groupData) {
+    const { name, description } = groupData;
+
+    const result = await pool.query(`
+      UPDATE groups
+      SET name = $1, description = $2
+      WHERE id = $3
+      RETURNING id, name, description, created_at
+    `, [name, description, id]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    return {
+      success: true,
+      group: result.rows[0]
+    };
+  },
+
+  /**
+   * Delete group
+   * @param {number} id - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async deleteGroup(id) {
+    const result = await pool.query(
+      'DELETE FROM groups WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    return { success: true, message: 'Group deleted successfully' };
+  },
+
+  /**
+   * Get users in a group
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Array>} Users in the group
+   */
+  async getUsersInGroup(groupId) {
+    const result = await pool.query(`
+      SELECT u.id, u.email, u.display_name, u.role, u.status, ug.joined_at
+      FROM users u
+      INNER JOIN user_groups ug ON u.id = ug.user_id
+      WHERE ug.group_id = $1
+      ORDER BY ug.joined_at DESC
+    `, [groupId]);
+    return result.rows;
+  },
+
+  /**
+   * Get groups for a user
+   * @param {number} userId - User ID
+   * @returns {Promise<Array>} Groups the user belongs to
+   */
+  async getGroupsForUser(userId) {
+    const result = await pool.query(`
+      SELECT g.id, g.name, g.description, ug.joined_at
+      FROM groups g
+      INNER JOIN user_groups ug ON g.id = ug.group_id
+      WHERE ug.user_id = $1
+      ORDER BY g.name ASC
+    `, [userId]);
+    return result.rows;
+  },
+
+  /**
+   * Add user to group
+   * @param {number} userId - User ID
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async addUserToGroup(userId, groupId) {
+    // Check if user exists
+    const userResult = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (userResult.rowCount === 0) {
+      throw new Error('User not found');
+    }
+
+    // Check if group exists
+    const groupResult = await pool.query('SELECT id FROM groups WHERE id = $1', [groupId]);
+    if (groupResult.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    // Add user to group (ON CONFLICT prevents duplicate entries)
+    const result = await pool.query(`
+      INSERT INTO user_groups (user_id, group_id)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id, group_id) DO NOTHING
+      RETURNING user_id, group_id, joined_at
+    `, [userId, groupId]);
+
+    if (result.rowCount === 0) {
+      return { success: true, message: 'User already in group' };
+    }
+
+    return { success: true, message: 'User added to group successfully' };
+  },
+
+  /**
+   * Remove user from group
+   * @param {number} userId - User ID
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async removeUserFromGroup(userId, groupId) {
+    const result = await pool.query(
+      'DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2',
+      [userId, groupId]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('User not in group');
+    }
+
+    return { success: true, message: 'User removed from group successfully' };
+  },
+
+  /**
+   * Get all users with their groups
+   * @returns {Promise<Array>} All users with group information
+   */
+  async getAllUsersWithGroups() {
+    const result = await pool.query(`
+      SELECT u.id, u.email, u.display_name, u.role, u.status, u.created_at,
+             array_agg(DISTINCT jsonb_build_object(
+               'id', g.id,
+               'name', g.name,
+               'joined_at', ug.joined_at
+             )) FILTER (WHERE g.id IS NOT NULL) as groups
+      FROM users u
+      LEFT JOIN user_groups ug ON u.id = ug.user_id
+      LEFT JOIN groups g ON ug.group_id = g.id
+      GROUP BY u.id
+      ORDER BY u.display_name ASC
+    `);
+    return result.rows;
   }
 };
 

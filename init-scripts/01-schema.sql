@@ -28,6 +28,31 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 CREATE INDEX IF NOT EXISTS idx_users_created_at ON users(created_at DESC);
 
 -- ============================================
+-- GROUPS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS groups (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(100) NOT NULL UNIQUE,
+  description TEXT,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_groups_name ON groups(name);
+
+-- ============================================
+-- USER_GROUPS JUNCTION TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_groups (
+  user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  group_id INTEGER NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+  joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (user_id, group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_groups_user_id ON user_groups(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_groups_group_id ON user_groups(group_id);
+
+-- ============================================
 -- PATHS TABLE (Hierarchical Organization)
 -- ============================================
 CREATE TABLE IF NOT EXISTS paths (
@@ -67,10 +92,14 @@ CREATE TABLE IF NOT EXISTS posts (
   content TEXT NOT NULL,
   excerpt VARCHAR(500),
   category VARCHAR(50) NOT NULL DEFAULT 'thoughts',
+  category_post_number INTEGER,
   slug VARCHAR(50) UNIQUE NOT NULL,
   read_time VARCHAR(50),
   author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   path_id INTEGER REFERENCES paths(id) ON DELETE SET NULL,
+  parent_id INTEGER REFERENCES posts(id) ON DELETE CASCADE,
+  position INTEGER DEFAULT 0,
+  level INTEGER DEFAULT 1 CHECK(level >= 1 AND level <= 5),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   published BOOLEAN DEFAULT true
@@ -78,12 +107,16 @@ CREATE TABLE IF NOT EXISTS posts (
 
 -- Indexes for post queries
 CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category);
+CREATE INDEX IF NOT EXISTS idx_posts_category_number ON posts(category, category_post_number);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_updated_at ON posts(updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published);
 CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
 CREATE INDEX IF NOT EXISTS idx_posts_author_id ON posts(author_id);
 CREATE INDEX IF NOT EXISTS idx_posts_path_id ON posts(path_id);
+CREATE INDEX IF NOT EXISTS idx_posts_parent_id ON posts(parent_id);
+CREATE INDEX IF NOT EXISTS idx_posts_parent_position ON posts(parent_id, position);
+CREATE INDEX IF NOT EXISTS idx_posts_level ON posts(level);
 
 -- ============================================
 -- TAGS TABLE
@@ -233,6 +266,8 @@ LEFT JOIN users u ON p.created_by = u.id;
 -- ============================================
 
 COMMENT ON TABLE users IS 'User accounts with authentication and roles';
+COMMENT ON TABLE groups IS 'User groups for organizing users';
+COMMENT ON TABLE user_groups IS 'Many-to-many relationship between users and groups';
 COMMENT ON TABLE posts IS 'Blog posts content';
 COMMENT ON TABLE tags IS 'Post tags/categories';
 COMMENT ON TABLE post_tags IS 'Many-to-many relationship between posts and tags';

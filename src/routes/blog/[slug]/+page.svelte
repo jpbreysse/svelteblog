@@ -33,8 +33,13 @@
   <div class="post-container">
     <article class="post-article">
       <header class="post-header">
-        <h1 class="post-title">{data.post.title}</h1>
-        
+        <h1 class="post-title">
+          {#if data.post.category_post_number}
+            <span class="title-prefix">{data.post.category.substring(0, 3).toUpperCase()} #{data.post.category_post_number}:</span>
+          {/if}
+          {data.post.title}
+        </h1>
+
         <div class="post-meta">
           <span class="author">👤 {data.post.author}</span>
           <span class="date">📅 {formatDate(data.post.created_at)}</span>
@@ -77,11 +82,11 @@
   
   <style>
     .post-container {
-      max-width: 800px;
+      max-width: 1400px;
       margin: 0 auto;
       padding: 2rem;
     }
-    
+
     .post-article {
       background: white;
       border-radius: 12px;
@@ -102,7 +107,15 @@
       margin: 0 0 1.5rem 0;
       line-height: 1.2;
     }
-    
+
+    .title-prefix {
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 0.7em;
+      margin-right: 0.5rem;
+      display: inline-block;
+    }
+
     .post-meta {
       display: flex;
       gap: 2rem;
@@ -111,7 +124,13 @@
       color: #6b7280;
       margin-bottom: 1rem;
     }
-    
+
+    .post-number {
+      font-weight: 600;
+      color: #2563eb;
+      margin-left: 0.25rem;
+    }
+
     .post-tags {
       display: flex;
       gap: 0.5rem;
@@ -294,35 +313,56 @@
     
     @media (max-width: 768px) {
       .post-container {
-        padding: 1rem;
+        padding: 0.5rem;
       }
-      
+
       .post-article {
-        padding: 2rem 1.5rem;
+        padding: 1.5rem 1rem;
+        border-radius: 8px;
       }
-      
+
       .post-title {
-        font-size: 2rem;
+        font-size: 1.75rem;
       }
-      
+
       .post-meta {
         font-size: 0.875rem;
-        gap: 1rem;
+        gap: 0.75rem;
       }
-      
+
       .post-content {
         font-size: 1rem;
       }
-      
+
       .footer-content {
         flex-direction: column;
         gap: 1rem;
         align-items: stretch;
       }
-      
+
       .back-link, .report-link {
         text-align: center;
         justify-content: center;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .post-container {
+        padding: 0;
+      }
+
+      .post-article {
+        padding: 1rem;
+        border-radius: 0;
+      }
+
+      .post-title {
+        font-size: 1.5rem;
+      }
+
+      .post-meta {
+        font-size: 0.75rem;
+        gap: 0.5rem;
       }
     }
   </style>
