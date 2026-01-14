@@ -5,6 +5,11 @@
 
   export let user = null;
 
+  // History panel state
+  let showHistoryPanel = true;
+  let postHistory = [];
+  let loadingHistory = false;
+
   let paths = [];
   let posts = [];
   let selectedPost = null;
@@ -15,19 +20,6 @@
   let selectedPathId = null;
   let expandPathIds = [];
   let searchQuery = '';
-  let userGroups = [];
-
-  // Compute which posts the user can edit (reactive to userGroups changes)
-  $: editablePosts = new Set(
-    posts
-      .filter(post => {
-        if (!user) return false;
-        if (post.author_id === user.id || user.role === 'admin') return true;
-        if (post.visibility === 'groups' && userGroups.length > 0) return true;
-        return false;
-      })
-      .map(post => post.id)
-  );
 
   // Reactive filtered data based on search
   $: searchResults = filterBySearch(paths, posts, searchQuery);
@@ -40,19 +32,6 @@
 
   onMount(async () => {
     loadHierarchy();
-
-    // Load user's groups for permissions
-    if (user) {
-      try {
-        const groupsResponse = await fetch('/api/groups/my-groups');
-        const groupsData = await groupsResponse.json();
-        if (groupsData.success) {
-          userGroups = groupsData.groups || [];
-        }
-      } catch (error) {
-        console.error('Failed to load groups:', error);
-      }
-    }
 
     // Check URL for initial post selection
     const urlParams = new URLSearchParams(window.location.search);
@@ -104,17 +83,50 @@
         const url = new URL(window.location);
         url.searchParams.set('post', postId);
         window.history.pushState({}, '', url);
+
+        // Load history for this post
+        loadPostHistory(postId);
       } else {
         error = data.error;
         selectedPost = null;
+        postHistory = [];
       }
     } catch (err) {
       console.error('Error loading post content:', err);
       error = 'Failed to load post content';
       selectedPost = null;
+      postHistory = [];
     } finally {
       loading = false;
     }
+  }
+
+  async function loadPostHistory(postId) {
+    loadingHistory = true;
+    try {
+      const response = await fetch(`/api/posts/${postId}/history`);
+      const data = await response.json();
+      if (data.success) {
+        postHistory = data.history;
+      } else {
+        postHistory = [];
+      }
+    } catch (err) {
+      console.error('Error loading post history:', err);
+      postHistory = [];
+    } finally {
+      loadingHistory = false;
+    }
+  }
+
+  function formatHistoryDate(date) {
+    return new Date(date).toLocaleString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
   }
 
   function handlePostSelect(event) {
@@ -124,44 +136,6 @@
 
   function handlePathSelect(event) {
     selectedPathId = event.detail.pathId;
-  }
-
-  async function handleEditPost(event) {
-    const post = event.detail;
-    // Redirect to blog editor with this post
-    goto(`/blog?edit=${post.id}`);
-  }
-
-  async function handleDeletePost(event) {
-    const postId = event.detail;
-
-    if (!confirm('Are you sure you want to delete this post?')) {
-      return;
-    }
-
-    try {
-      const response = await fetch(`/api/posts/${postId}`, {
-        method: 'DELETE'
-      });
-
-      const result = await response.json();
-
-      if (result.success) {
-        alert('✅ Post deleted successfully!');
-        // Reload hierarchy
-        await loadHierarchy();
-        // Clear selected post if it was the deleted one
-        if (currentPostId === postId) {
-          selectedPost = null;
-          currentPostId = null;
-        }
-      } else {
-        alert(`❌ Error: ${result.error}`);
-      }
-    } catch (error) {
-      console.error('Error deleting post:', error);
-      alert('❌ Failed to delete post');
-    }
   }
 
   // Search filtering logic
@@ -264,6 +238,11 @@
   }
 
   function canEditPost(post) {
+    // Use server-provided can_write if available (includes group permissions)
+    if (post.can_write !== undefined) {
+      return post.can_write;
+    }
+    // Fallback to basic check
     return user && (post.author_id === user.id || user.role === 'admin');
   }
 
@@ -295,6 +274,92 @@
     } catch (error) {
       console.error('Error deleting post:', error);
       alert('❌ Failed to delete post');
+    }
+  }
+
+  // Close/Reopen functionality
+  async function closePost(postId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/close`, {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Reload post to get updated state
+        await loadPostContent(postId);
+      } else {
+        alert(`❌ Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error closing post:', error);
+      alert('❌ Failed to close post');
+    }
+  }
+
+  async function reopenPost(postId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/close`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Reload post to get updated state
+        await loadPostContent(postId);
+      } else {
+        alert(`❌ Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error reopening post:', error);
+      alert('❌ Failed to reopen post');
+    }
+  }
+
+  // Assignment functionality
+  let showAssignDropdown = false;
+
+  async function assignPost(postId, userId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        showAssignDropdown = false;
+        // Reload post to get updated state
+        await loadPostContent(postId);
+      } else {
+        alert(`❌ Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error assigning post:', error);
+      alert('❌ Failed to assign post');
+    }
+  }
+
+  function claimPost(postId) {
+    if (user) {
+      assignPost(postId, user.id);
+    }
+  }
+
+  function unassignPost(postId) {
+    assignPost(postId, null);
+  }
+
+  function getHistoryActionLabel(action) {
+    switch (action) {
+      case 'created': return '✨ Created';
+      case 'updated': return '✏️ Updated';
+      case 'closed': return '🔒 Closed';
+      case 'reopened': return '🔓 Reopened';
+      case 'assigned': return '📥 Assigned';
+      case 'unassigned': return '📤 Unassigned';
+      default: return action;
     }
   }
 </script>
@@ -350,11 +415,8 @@
           selectedPostId={currentPostId}
           autoExpandPathIds={allExpandPathIds}
           {searchQuery}
-          {editablePosts}
           on:select={handlePostSelect}
           on:pathselect={handlePathSelect}
-          on:edit={handleEditPost}
-          on:delete={handleDeletePost}
         />
       {/key}
     </div>
@@ -401,6 +463,18 @@
       <!-- Post Content -->
       <article class="post-content">
         <header class="post-header">
+          <!-- Status badges -->
+          <div class="post-status-badges">
+            {#if selectedPost.closed_at}
+              <span class="status-badge closed">🔒 Closed</span>
+            {/if}
+            {#if selectedPost.assigned_user}
+              <span class="status-badge assigned">👤 {selectedPost.assigned_user.name}</span>
+            {:else if selectedPost.visibility === 'groups'}
+              <span class="status-badge unassigned">📭 Unassigned</span>
+            {/if}
+          </div>
+
           <h1 class="post-title">
             {#if selectedPost.category_post_number && selectedPost.category}
               <span class="title-prefix">{selectedPost.category.substring(0, 3).toUpperCase()} #{selectedPost.category_post_number}:</span>
@@ -423,16 +497,72 @@
             </div>
           {/if}
 
-          {#if canEditPost(selectedPost)}
-            <div class="post-actions">
+          <!-- Action buttons -->
+          <div class="post-actions">
+            {#if canEditPost(selectedPost)}
               <button class="btn-action edit-btn" on:click={() => editPost(selectedPost)}>
                 ✏️ Edit
               </button>
               <button class="btn-action delete-btn" on:click={() => deletePost(selectedPost.id)}>
                 🗑️ Delete
               </button>
-            </div>
-          {/if}
+            {/if}
+
+            <!-- Close/Reopen button -->
+            {#if selectedPost.can_close}
+              {#if selectedPost.closed_at}
+                <button class="btn-action reopen-btn" on:click={() => reopenPost(selectedPost.id)}>
+                  🔓 Reopen
+                </button>
+              {:else}
+                <button class="btn-action close-btn" on:click={() => closePost(selectedPost.id)}>
+                  🔒 Close
+                </button>
+              {/if}
+            {/if}
+
+            <!-- Assign dropdown -->
+            {#if selectedPost.can_assign}
+              <div class="assign-dropdown-container">
+                {#if !selectedPost.assigned_user}
+                  <button class="btn-action claim-btn" on:click={() => claimPost(selectedPost.id)}>
+                    🙋 Claim
+                  </button>
+                {/if}
+                <button
+                  class="btn-action assign-btn"
+                  on:click={() => showAssignDropdown = !showAssignDropdown}
+                >
+                  📋 {selectedPost.assigned_user ? 'Reassign' : 'Assign'}
+                </button>
+
+                {#if showAssignDropdown}
+                  <div class="assign-dropdown">
+                    {#if selectedPost.assigned_user}
+                      <button class="dropdown-item unassign" on:click={() => unassignPost(selectedPost.id)}>
+                        ❌ Unassign
+                      </button>
+                    {/if}
+                    {#each selectedPost.assignable_users || [] as assignee}
+                      <button
+                        class="dropdown-item"
+                        class:current={selectedPost.assigned_user?.id === assignee.id}
+                        on:click={() => assignPost(selectedPost.id, assignee.id)}
+                      >
+                        👤 {assignee.display_name}
+                        {#if selectedPost.assigned_user?.id === assignee.id}
+                          ✓
+                        {/if}
+                      </button>
+                    {/each}
+                    {#if !selectedPost.assignable_users?.length}
+                      <div class="dropdown-empty">No assignable users</div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
         </header>
 
         <div class="post-body">
@@ -478,14 +608,62 @@
       </div>
     {/if}
   </main>
+
+  <!-- Right Panel: History -->
+  {#if selectedPost && showHistoryPanel}
+    <aside class="history-panel">
+      <div class="panel-header">
+        <h3>📜 History</h3>
+        <button class="btn-close-panel" on:click={() => showHistoryPanel = false} title="Close panel">
+          ✕
+        </button>
+      </div>
+
+      <div class="history-content">
+        {#if loadingHistory}
+          <div class="history-loading">Loading history...</div>
+        {:else if postHistory.length === 0}
+          <div class="history-empty">No history available</div>
+        {:else}
+          <ul class="history-list">
+            {#each postHistory as entry}
+              <li class="history-entry">
+                <div class="history-action {entry.action}">
+                  {getHistoryActionLabel(entry.action)}
+                </div>
+                {#if entry.action === 'assigned' && entry.target_user_name}
+                  <div class="history-user">📥 To: {entry.target_user_name}</div>
+                  <div class="history-user secondary">By: {entry.user_name}</div>
+                {:else if entry.action === 'unassigned' && entry.target_user_name}
+                  <div class="history-user">📤 Was: {entry.target_user_name}</div>
+                  <div class="history-user secondary">By: {entry.user_name}</div>
+                {:else}
+                  <div class="history-user">👤 {entry.user_name}</div>
+                {/if}
+                <div class="history-date">{formatHistoryDate(entry.created_at)}</div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </aside>
+  {/if}
+
+  <!-- Toggle button when panel is hidden -->
+  {#if selectedPost && !showHistoryPanel}
+    <button class="btn-show-history" on:click={() => showHistoryPanel = true} title="Show history">
+      📜
+    </button>
+  {/if}
 </div>
 
 <style>
   .confluence-explorer {
     display: grid;
-    grid-template-columns: 400px 1fr;
+    grid-template-columns: 400px 1fr auto;
     height: calc(100vh - 120px);
     background: #f9fafb;
+    position: relative;
   }
 
   /* Sidebar */
@@ -759,6 +937,119 @@
     border-color: #ef4444;
   }
 
+  .close-btn:hover {
+    background: #fef3c7;
+    border-color: #f59e0b;
+  }
+
+  .reopen-btn:hover {
+    background: #d1fae5;
+    border-color: #10b981;
+  }
+
+  .claim-btn:hover {
+    background: #e0e7ff;
+    border-color: #6366f1;
+  }
+
+  .assign-btn:hover {
+    background: #f3f4f6;
+    border-color: #6b7280;
+  }
+
+  /* Status badges */
+  .post-status-badges {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+
+  .status-badge.closed {
+    background: #fef2f2;
+    color: #dc2626;
+    border: 1px solid #fecaca;
+  }
+
+  .status-badge.assigned {
+    background: #eff6ff;
+    color: #2563eb;
+    border: 1px solid #bfdbfe;
+  }
+
+  .status-badge.unassigned {
+    background: #fefce8;
+    color: #ca8a04;
+    border: 1px solid #fef08a;
+  }
+
+  /* Assign dropdown */
+  .assign-dropdown-container {
+    position: relative;
+    display: inline-flex;
+    gap: 0.25rem;
+  }
+
+  .assign-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 0.25rem;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    z-index: 100;
+    overflow: hidden;
+  }
+
+  .dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+    transition: background 0.2s;
+  }
+
+  .dropdown-item:hover {
+    background: #f3f4f6;
+  }
+
+  .dropdown-item.current {
+    background: #eff6ff;
+    font-weight: 500;
+  }
+
+  .dropdown-item.unassign {
+    color: #dc2626;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .dropdown-item.unassign:hover {
+    background: #fef2f2;
+  }
+
+  .dropdown-empty {
+    padding: 0.75rem;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
   .post-body {
     font-size: 1.125rem;
     line-height: 1.8;
@@ -847,6 +1138,156 @@
     white-space: nowrap;
   }
 
+  /* History Panel */
+  .history-panel {
+    width: 280px;
+    background: white;
+    border-left: 1px solid #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+  }
+
+  .panel-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .btn-close-panel {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .btn-close-panel:hover {
+    background: #fee2e2;
+    color: #ef4444;
+  }
+
+  .history-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+
+  .history-loading,
+  .history-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .history-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .history-entry {
+    padding: 0.75rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+  }
+
+  .history-entry:hover {
+    background: #f3f4f6;
+  }
+
+  .history-action {
+    font-size: 0.8rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  .history-action.created {
+    color: #059669;
+  }
+
+  .history-action.updated {
+    color: #2563eb;
+  }
+
+  .history-action.closed {
+    color: #dc2626;
+  }
+
+  .history-action.reopened {
+    color: #10b981;
+  }
+
+  .history-action.assigned {
+    color: #7c3aed;
+  }
+
+  .history-action.unassigned {
+    color: #f59e0b;
+  }
+
+  .history-user {
+    font-size: 0.8rem;
+    color: #374151;
+    margin-bottom: 0.25rem;
+  }
+
+  .history-user.secondary {
+    font-size: 0.7rem;
+    color: #9ca3af;
+  }
+
+  .history-date {
+    font-size: 0.75rem;
+    color: #9ca3af;
+  }
+
+  /* Show History Button (when panel is hidden) */
+  .btn-show-history {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 40px;
+    border: 1px solid #e5e7eb;
+    background: white;
+    border-radius: 8px;
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+    z-index: 10;
+  }
+
+  .btn-show-history:hover {
+    background: #f3f4f6;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  }
+
   /* Responsive */
   @media (max-width: 900px) {
     .confluence-explorer {
@@ -854,6 +1295,14 @@
     }
 
     .sidebar {
+      display: none;
+    }
+
+    .history-panel {
+      display: none;
+    }
+
+    .btn-show-history {
       display: none;
     }
 

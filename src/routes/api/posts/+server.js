@@ -128,6 +128,13 @@ export async function POST({ request, locals }) {
     const result = await blogDB.createPost(postData, locals.user.id);
     console.log('✅ Post created with ID:', result.post.id);
 
+    // Record creation in history
+    await pool.query(
+      'INSERT INTO post_history (post_id, user_id, action) VALUES ($1, $2, $3)',
+      [result.post.id, locals.user.id, 'created']
+    );
+    console.log('✅ History recorded for post:', result.post.id);
+
     // Update tags if provided
     if (postData.tags && Array.isArray(postData.tags) && postData.tags.length > 0) {
       await blogDB.updatePostTags(result.post.id, postData.tags);

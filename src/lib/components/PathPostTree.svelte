@@ -7,7 +7,6 @@
   export let level = 0;
   export let autoExpandPathIds = [];
   export let searchQuery = '';
-  export let editablePosts = new Set();
 
   const dispatch = createEventDispatcher();
 
@@ -163,24 +162,6 @@
                         <span class="item-title">{@html highlightMatch(post.title, searchQuery)}</span>
                       </span>
                     </div>
-                    {#if editablePosts.has(post.id)}
-                      <div class="post-actions">
-                        <button
-                          class="action-btn edit-btn"
-                          on:click|stopPropagation={() => dispatch('edit', post)}
-                          title="Edit"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          class="action-btn delete-btn"
-                          on:click|stopPropagation={() => dispatch('delete', post.id)}
-                          title="Delete"
-                        >
-                          🗑️
-                        </button>
-                      </div>
-                    {/if}
                   </div>
                 </li>
               {/each}
@@ -195,12 +176,9 @@
               {selectedPostId}
               {autoExpandPathIds}
               {searchQuery}
-              {editablePosts}
               level={level + 1}
               on:select
               on:pathselect
-              on:edit
-              on:delete
             />
           {/if}
         {/if}
@@ -230,24 +208,6 @@
               <span class="item-title">{@html highlightMatch(post.title, searchQuery)}</span>
             </span>
           </div>
-          {#if editablePosts.has(post.id)}
-            <div class="post-actions">
-              <button
-                class="action-btn edit-btn"
-                on:click|stopPropagation={() => dispatch('edit', post)}
-                title="Edit"
-              >
-                ✏️
-              </button>
-              <button
-                class="action-btn delete-btn"
-                on:click|stopPropagation={() => dispatch('delete', post.id)}
-                title="Delete"
-              >
-                🗑️
-              </button>
-            </div>
-          {/if}
         </div>
       </li>
     {/each}
@@ -310,38 +270,6 @@
     flex: 1;
     min-width: 0;
     cursor: pointer;
-  }
-
-  .post-actions {
-    display: flex;
-    gap: 0.25rem;
-    flex-shrink: 0;
-    margin-left: auto;
-    opacity: 0;
-    transition: opacity 0.2s;
-  }
-
-  .post-node:hover .post-actions,
-  .tree-node:hover .post-actions {
-    opacity: 1;
-  }
-
-  .action-btn {
-    background: none;
-    border: none;
-    cursor: pointer;
-    padding: 0.25rem 0.5rem;
-    font-size: 0.875rem;
-    border-radius: 4px;
-    transition: background 0.2s;
-  }
-
-  .action-btn:hover {
-    background: rgba(0, 0, 0, 0.1);
-  }
-
-  .delete-btn:hover {
-    background: rgba(239, 68, 68, 0.1);
   }
 
   .expand-btn {

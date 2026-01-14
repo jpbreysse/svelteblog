@@ -1,5 +1,5 @@
 import { json } from '@sveltejs/kit';
-import { blogDB } from '$lib/db.js';
+import { blogDB, pool } from '$lib/db.js';
 import { setPostPermissions, canWritePost, canReadPost } from '$lib/server/permissions.js';
 
 // Helper function to strip HTML tags and decode entities
@@ -175,6 +175,19 @@ export async function PUT({ params, request, locals }) {
 
     const isAdmin = locals.user.role === 'admin';
     const post = await blogDB.updatePost(postId, postData, locals.user.id, isAdmin);
+
+    // Record update in history
+    await pool.query(
+      'INSERT INTO post_history (post_id, user_id, action) VALUES ($1, $2, $3)',
+      [postId, locals.user.id, 'updated']
+    );
+
+    // Update updated_by field
+    await pool.query(
+      'UPDATE posts SET updated_by = $1 WHERE id = $2',
+      [locals.user.id, postId]
+    );
+    console.log('✅ History recorded for post:', postId);
 
     // Update tags if provided
     if (postData.tags && Array.isArray(postData.tags)) {

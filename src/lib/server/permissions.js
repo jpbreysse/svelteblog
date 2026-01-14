@@ -30,14 +30,21 @@ export async function canReadPost(postId, userId = null, userRole = 'user') {
     LEFT JOIN post_read_groups prg ON p.id = prg.post_id
     LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
     WHERE p.id = $1
-      AND p.published = true
       AND (
-        -- Public posts
-        p.visibility = 'public'
-        -- Private posts (author only)
-        OR (p.visibility = 'private' AND p.author_id = $2)
-        -- Group posts (user is in a read group)
-        OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+        -- Author can always see their own posts (published or not)
+        p.author_id = $2
+        -- Published posts with proper permissions
+        OR (
+          p.published = true
+          AND (
+            -- Public posts
+            p.visibility = 'public'
+            -- Private posts (author only - already covered above)
+            OR (p.visibility = 'private' AND p.author_id = $2)
+            -- Group posts (user is in a read group)
+            OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+          )
+        )
       )
     LIMIT 1
   `, [postId, userId]);
@@ -54,6 +61,22 @@ export async function canReadPost(postId, userId = null, userRole = 'user') {
  */
 export async function canWritePost(postId, userId, userRole = 'user') {
   console.log('🔐 Checking write permission - Post:', postId, 'User:', userId, 'Role:', userRole);
+
+  // First check if post is closed
+  const closedCheck = await pool.query(
+    'SELECT closed_at FROM posts WHERE id = $1',
+    [postId]
+  );
+
+  if (closedCheck.rows.length > 0 && closedCheck.rows[0].closed_at) {
+    // Post is closed - only admins can edit
+    if (userRole === 'admin') {
+      console.log('✅ Post is closed but user is admin - write access granted');
+      return true;
+    }
+    console.log('❌ Post is closed - write access denied');
+    return false;
+  }
 
   // Admins can edit everything
   if (userRole === 'admin') {
@@ -281,6 +304,85 @@ export async function getPostPermissions(postId) {
     readGroups: readResult.rows,
     writeGroups: writeResult.rows
   };
+}
+
+/**
+ * Check if user can close/reopen a post
+ * Author, assignee, or anyone with write permission can close
+ * @param {number} postId - Post ID
+ * @param {number} userId - User ID
+ * @param {string} userRole - User role
+ * @returns {Promise<boolean>}
+ */
+export async function canClosePost(postId, userId, userRole = 'user') {
+  // Admins can always close/reopen
+  if (userRole === 'admin') {
+    return true;
+  }
+
+  const result = await pool.query(`
+    SELECT p.id
+    FROM posts p
+    LEFT JOIN post_write_groups pwg ON p.id = pwg.post_id
+    LEFT JOIN user_groups ug ON pwg.group_id = ug.group_id AND ug.user_id = $2
+    WHERE p.id = $1
+      AND (
+        p.author_id = $2
+        OR p.assigned_to = $2
+        OR ug.user_id IS NOT NULL
+      )
+    LIMIT 1
+  `, [postId, userId]);
+
+  return result.rows.length > 0;
+}
+
+/**
+ * Check if user can assign a post
+ * Only users with write permission can assign
+ * @param {number} postId - Post ID
+ * @param {number} userId - User ID
+ * @param {string} userRole - User role
+ * @returns {Promise<boolean>}
+ */
+export async function canAssignPost(postId, userId, userRole = 'user') {
+  // Use the same logic as canWritePost but ignore closed status
+  if (userRole === 'admin') {
+    return true;
+  }
+
+  const result = await pool.query(`
+    SELECT p.id
+    FROM posts p
+    LEFT JOIN post_write_groups pwg ON p.id = pwg.post_id
+    LEFT JOIN user_groups ug ON pwg.group_id = ug.group_id AND ug.user_id = $2
+    WHERE p.id = $1
+      AND (
+        p.author_id = $2
+        OR ug.user_id IS NOT NULL
+      )
+    LIMIT 1
+  `, [postId, userId]);
+
+  return result.rows.length > 0;
+}
+
+/**
+ * Get users who can be assigned to a post (members of write groups)
+ * @param {number} postId - Post ID
+ * @returns {Promise<Array>}
+ */
+export async function getAssignableUsers(postId) {
+  const result = await pool.query(`
+    SELECT DISTINCT u.id, u.display_name, u.email
+    FROM users u
+    INNER JOIN user_groups ug ON u.id = ug.user_id
+    INNER JOIN post_write_groups pwg ON ug.group_id = pwg.group_id
+    WHERE pwg.post_id = $1
+    ORDER BY u.display_name
+  `, [postId]);
+
+  return result.rows;
 }
 
 /**

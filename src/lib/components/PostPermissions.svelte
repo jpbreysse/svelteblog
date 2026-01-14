@@ -51,7 +51,7 @@
         <h4>👁️ Can Read</h4>
         <p class="help-text">Select groups that can view this post</p>
         {#if availableGroups.length === 0}
-          <p class="no-groups">No groups available. You need to be a member of at least one group.</p>
+          <p class="no-groups">No groups available.</p>
         {:else}
           <div class="group-list">
             {#each availableGroups as group}

@@ -3,6 +3,8 @@
     import { onMount } from 'svelte';
     import { goto } from '$app/navigation';
     import { invalidateAll, invalidate } from '$app/navigation';
+    import { page } from '$app/stores';
+    import { browser } from '$app/environment';
     import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     import ReportModal from '$lib/components/ReportModal.svelte';
     import PostPermissions from '$lib/components/PostPermissions.svelte';
@@ -39,6 +41,44 @@
     let loading = false;
     let closingEditor = false; // Flag to prevent reactive reopening after save/cancel
     let userGroups = []; // User's groups for permissions
+    let hasOpenedNewPost = false; // Track if we've already opened the new post editor for this URL
+
+    // Watch for ?new=true in URL and open editor (works for client-side navigation)
+    $: if (browser && $page.url.searchParams.get('new') === 'true' && data.user && !showEditor && !closingEditor && !hasOpenedNewPost) {
+        hasOpenedNewPost = true;
+        openNewPostEditor();
+    }
+
+    // Reset the flag when URL changes away from new=true
+    $: if (browser && $page.url.searchParams.get('new') !== 'true') {
+        hasOpenedNewPost = false;
+    }
+
+    function openNewPostEditor() {
+        const pathId = $page.url.searchParams.get('path_id');
+        const selectedPathId = pathId ? parseInt(pathId) : null;
+
+        editingPost = {
+            id: null,
+            title: '',
+            content: '',
+            excerpt: '',
+            category: defaultCategory,
+            tags: [],
+            path_id: selectedPathId,
+            published: false,
+            visibility: 'public',
+            readGroupIds: [],
+            writeGroupIds: []
+        };
+        showEditor = true;
+        setTimeout(initEditor, 100);
+
+        // Clear the new=true parameter from URL
+        const newUrl = new URL(window.location);
+        newUrl.searchParams.delete('new');
+        window.history.replaceState({}, '', newUrl);
+    }
 
     // Compute which posts the user can edit (reactive to userGroups changes)
     $: editablePosts = new Set(
@@ -77,51 +117,20 @@
     }
     
     onMount(async () => {
-      // No need to load posts on client-side anymore
-      // Data is already loaded server-side
+      // Note: New post creation is now handled by the reactive $page statement above
+      // This allows it to work with client-side navigation too
 
-      // Check for new post creation from URL parameter
-      const urlParams = new URLSearchParams(window.location.search);
-      const isNewPost = urlParams.get('new') === 'true';
-      const pathId = urlParams.get('path_id');
-
-      if (isNewPost && data.user) {
-        // Create a new empty post
-        const selectedPathId = pathId ? parseInt(pathId) : null;
-
-        editingPost = {
-          id: null,
-          title: '',
-          content: '',
-          excerpt: '',
-          category: defaultCategory,
-          tags: [],
-          path_id: selectedPathId,
-          published: false,
-          visibility: 'public',
-          readGroupIds: [],
-          writeGroupIds: []
-        };
-        showEditor = true;
-        setTimeout(initEditor, 100);
-
-        // Clear the new=true parameter from URL but keep return and path_id
-        const newUrl = new URL(window.location);
-        newUrl.searchParams.delete('new');
-        window.history.replaceState({}, '', newUrl);
-      }
-
-      // Load user's groups for permissions
+      // Load all groups for permissions (users can assign any group)
       if (data.user) {
         try {
-          console.log('📡 Fetching groups for user:', data.user);
-          const groupsResponse = await fetch('/api/groups/my-groups');
+          console.log('📡 Fetching all groups');
+          const groupsResponse = await fetch('/api/groups');
           console.log('📡 Response status:', groupsResponse.status);
           const groupsData = await groupsResponse.json();
           console.log('📡 Response data:', groupsData);
           if (groupsData.success) {
             userGroups = groupsData.groups || [];
-            console.log('✅ Loaded user groups:', userGroups);
+            console.log('✅ Loaded groups:', userGroups);
           } else {
             console.error('❌ API returned error:', groupsData.error);
           }
@@ -542,101 +551,108 @@
             </button>
           </div>
         </div>
-        
-        <div class="post-meta-form">
-          <div class="input-group">
-            <input 
-              bind:value={editingPost.title}
-              placeholder="Your post title..."
-              class="title-input"
-              class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}
-              class:error={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.max}
-              maxlength={VALIDATION_LIMITS.title.max + 50}
-              disabled={loading}
+
+        <div class="editor-layout">
+          <!-- Left Sidebar: Permissions -->
+          <aside class="editor-sidebar">
+            <PostPermissions
+              bind:visibility={editingPost.visibility}
+              bind:readGroupIds={editingPost.readGroupIds}
+              bind:writeGroupIds={editingPost.writeGroupIds}
+              availableGroups={userGroups}
             />
-            <div class="char-counter" class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}>
-              {editingPost.title ? editingPost.title.length : 0}/{VALIDATION_LIMITS.title.max}
+          </aside>
+
+          <!-- Main Content Area -->
+          <div class="editor-main">
+            <div class="post-meta-form">
+              <div class="input-group">
+                <input
+                  bind:value={editingPost.title}
+                  placeholder="Your post title..."
+                  class="title-input"
+                  class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}
+                  class:error={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.max}
+                  maxlength={VALIDATION_LIMITS.title.max + 50}
+                  disabled={loading}
+                />
+                <div class="char-counter" class:warning={editingPost.title && editingPost.title.length > VALIDATION_LIMITS.title.warning}>
+                  {editingPost.title ? editingPost.title.length : 0}/{VALIDATION_LIMITS.title.max}
+                </div>
+              </div>
+
+              <div class="meta-row">
+                <div class="input-group">
+                  <select bind:value={editingPost.category} class="category-select" disabled={loading}>
+                    {#each availableCategories as category}
+                      <option value={category.value}>{category.label}</option>
+                    {/each}
+                  </select>
+                  <div class="category-label">Category</div>
+                </div>
+
+                <div class="input-group">
+                  <input
+                    value={editingPost.tags ? editingPost.tags.join(', ') : ''}
+                    on:blur={handleTagsInput}
+                    placeholder="Tags (comma separated, max 10)"
+                    class="tags-input"
+                    class:error={editingPost.tags && editingPost.tags.length > VALIDATION_LIMITS.tags.max}
+                    disabled={loading}
+                  />
+                  <div class="tag-counter" class:warning={editingPost.tags && editingPost.tags.length > 7}>
+                    {editingPost.tags ? editingPost.tags.length : 0}/{VALIDATION_LIMITS.tags.max} tags
+                  </div>
+                </div>
+              </div>
+
+              <div class="input-group">
+                <select bind:value={editingPost.path_id} class="path-select" disabled={loading}>
+                  <option value={null}>📂 No folder (root level)</option>
+                  {#each paths as path}
+                    <option value={path.id}>
+                      📁 {path.full_path || path.name}
+                    </option>
+                  {/each}
+                </select>
+                <div class="path-label">Folder</div>
+              </div>
             </div>
-          </div>
-          
-          <div class="meta-row">
-            <div class="input-group">
-              <select bind:value={editingPost.category} class="category-select" disabled={loading}>
-                {#each availableCategories as category}
-                  <option value={category.value}>{category.label}</option>
+
+            <div class="editor-wrapper">
+              <div class="editor-header-info">
+                <span class="content-counter" class:warning={getContentLength() > VALIDATION_LIMITS.content.warning}>
+                  📝 {getContentLength().toLocaleString()}/{VALIDATION_LIMITS.content.max.toLocaleString()} characters
+                </span>
+              </div>
+              <div bind:this={editorContainer} id="blog-editor" class="quill-editor-container"></div>
+            </div>
+
+            <!-- Validation Messages -->
+            {#if validationErrors.length > 0 || validationWarnings.length > 0}
+              <div class="validation-messages">
+                {#each validationErrors as error}
+                  <div class="validation-error">
+                    ❌ {error}
+                  </div>
                 {/each}
-              </select>
-              <div class="category-label">Category</div>
-            </div>
-            
-            <div class="input-group">
-              <input 
-                value={editingPost.tags ? editingPost.tags.join(', ') : ''}
-                on:blur={handleTagsInput}
-                placeholder="Tags (comma separated, max 10)"
-                class="tags-input"
-                class:error={editingPost.tags && editingPost.tags.length > VALIDATION_LIMITS.tags.max}
-                disabled={loading}
-              />
-              <div class="tag-counter" class:warning={editingPost.tags && editingPost.tags.length > 7}>
-                {editingPost.tags ? editingPost.tags.length : 0}/{VALIDATION_LIMITS.tags.max} tags
+                {#each validationWarnings as warning}
+                  <div class="validation-warning">
+                    ⚠️ {warning}
+                  </div>
+                {/each}
               </div>
-            </div>
-          </div>
-          
-          <div class="input-group">
-            <select bind:value={editingPost.path_id} class="path-select" disabled={loading}>
-              <option value={null}>📂 No folder (root level)</option>
-              {#each paths as path}
-                <option value={path.id}>
-                  📁 {path.full_path || path.name}
-                </option>
-              {/each}
-            </select>
-            <div class="path-label">Folder</div>
-          </div>
+            {/if}
 
-          <!-- Permissions Component -->
-          <PostPermissions
-            bind:visibility={editingPost.visibility}
-            bind:readGroupIds={editingPost.readGroupIds}
-            bind:writeGroupIds={editingPost.writeGroupIds}
-            availableGroups={userGroups}
-          />
-        </div>
-
-        <div class="editor-wrapper">
-          <div class="editor-header-info">
-            <span class="content-counter" class:warning={getContentLength() > VALIDATION_LIMITS.content.warning}>
-              📝 {getContentLength().toLocaleString()}/{VALIDATION_LIMITS.content.max.toLocaleString()} characters
-            </span>
+            <div class="editor-footer">
+              <button class="btn btn-primary" on:click={savePost} disabled={loading || !editingPost.title?.trim()}>
+                {loading ? '⏳ Saving...' : '📝 Save Post'}
+              </button>
+              <button class="btn btn-secondary" on:click={cancelEdit} disabled={loading}>
+                ❌ Cancel
+              </button>
+            </div>
           </div>
-          <div bind:this={editorContainer} id="blog-editor" class="quill-editor-container"></div>
-        </div>
-        
-        <!-- Validation Messages -->
-        {#if validationErrors.length > 0 || validationWarnings.length > 0}
-          <div class="validation-messages">
-            {#each validationErrors as error}
-              <div class="validation-error">
-                ❌ {error}
-              </div>
-            {/each}
-            {#each validationWarnings as warning}
-              <div class="validation-warning">
-                ⚠️ {warning}
-              </div>
-            {/each}
-          </div>
-        {/if}
-        
-        <div class="editor-footer">
-          <button class="btn btn-primary" on:click={savePost} disabled={loading || !editingPost.title?.trim()}>
-            {loading ? '⏳ Saving...' : '📝 Save Post'}
-          </button>
-          <button class="btn btn-secondary" on:click={cancelEdit} disabled={loading}>
-            ❌ Cancel
-          </button>
         </div>
       </div>
     {:else}
@@ -1146,7 +1162,24 @@
       margin: 0;
       color: #1f2937;
     }
-    
+
+    .editor-layout {
+      display: flex;
+      gap: 2rem;
+    }
+
+    .editor-sidebar {
+      flex: 0 0 280px;
+      position: sticky;
+      top: 1rem;
+      align-self: flex-start;
+    }
+
+    .editor-main {
+      flex: 1;
+      min-width: 0;
+    }
+
     .post-meta-form {
       margin-bottom: 2rem;
     }
@@ -1411,39 +1444,49 @@
       .blog-container {
         padding: 1rem;
       }
-      
+
       .header-content {
         flex-direction: column;
         text-align: center;
       }
-      
+
       .blog-title {
         font-size: 2rem;
       }
-      
+
       .search-controls {
         flex-direction: column;
       }
-      
+
       .search-bar {
         min-width: auto;
       }
-      
+
       .posts-grid {
         grid-template-columns: 1fr;
       }
-      
+
       .meta-row {
         grid-template-columns: 1fr;
       }
-      
+
       .post-meta {
         font-size: 0.8rem;
       }
-      
+
       .editor-footer {
         flex-direction: column;
         gap: 1rem;
+      }
+
+      .editor-layout {
+        flex-direction: column;
+      }
+
+      .editor-sidebar {
+        flex: none;
+        width: 100%;
+        position: static;
       }
     }
   </style>
