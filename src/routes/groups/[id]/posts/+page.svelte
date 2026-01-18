@@ -12,6 +12,139 @@
 
   let searchQuery = '';
 
+  // Expandable tree state
+  let expandedGroups = {};
+  let groupPosts = {}; // Cache of posts per group
+  let loadingGroups = {}; // Loading state per group
+
+  // Selected post state (for inline viewing)
+  let selectedPost = null;
+  let selectedPostId = null;
+  let loadingPost = false;
+  let postError = null;
+
+  // History panel state
+  let showHistoryPanel = true;
+  let postHistory = [];
+  let loadingHistory = false;
+
+  // Assign dropdown state
+  let showAssignDropdown = false;
+
+  // Auto-expand current group
+  $: if (group && group.id) {
+    expandedGroups[group.id] = true;
+    groupPosts[group.id] = posts;
+  }
+
+  async function toggleGroup(groupId) {
+    if (expandedGroups[groupId]) {
+      // Collapse
+      expandedGroups[groupId] = false;
+      expandedGroups = expandedGroups;
+    } else {
+      // Expand - load posts if not cached
+      expandedGroups[groupId] = true;
+      expandedGroups = expandedGroups;
+
+      if (!groupPosts[groupId]) {
+        await loadGroupPosts(groupId);
+      }
+    }
+  }
+
+  async function loadGroupPosts(groupId) {
+    loadingGroups[groupId] = true;
+    loadingGroups = loadingGroups;
+
+    try {
+      const response = await fetch(`/api/groups/${groupId}/posts`);
+      const result = await response.json();
+
+      if (result.success) {
+        groupPosts[groupId] = result.posts;
+        groupPosts = groupPosts;
+      }
+    } catch (err) {
+      console.error('Error loading group posts:', err);
+    } finally {
+      loadingGroups[groupId] = false;
+      loadingGroups = loadingGroups;
+    }
+  }
+
+  async function viewPost(post) {
+    selectedPostId = post.id;
+    loadingPost = true;
+    postError = null;
+    postHistory = [];
+
+    try {
+      const response = await fetch(`/api/posts/${post.id}/content`);
+      const result = await response.json();
+
+      if (result.success) {
+        selectedPost = result.post;
+        // Load history
+        loadPostHistory(post.id);
+      } else {
+        postError = result.error || 'Failed to load post';
+      }
+    } catch (err) {
+      console.error('Error loading post:', err);
+      postError = 'Failed to load post';
+    } finally {
+      loadingPost = false;
+    }
+  }
+
+  async function loadPostHistory(postId) {
+    loadingHistory = true;
+    try {
+      const response = await fetch(`/api/posts/${postId}/history`);
+      const data = await response.json();
+      if (data.success) {
+        postHistory = data.history;
+      } else {
+        postHistory = [];
+      }
+    } catch (err) {
+      console.error('Error loading post history:', err);
+      postHistory = [];
+    } finally {
+      loadingHistory = false;
+    }
+  }
+
+  function closePost() {
+    selectedPost = null;
+    selectedPostId = null;
+    postError = null;
+    postHistory = [];
+    showAssignDropdown = false;
+  }
+
+  function formatHistoryDate(date) {
+    return new Date(date).toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit'
+    });
+  }
+
+  function getHistoryActionLabel(action) {
+    switch (action) {
+      case 'created': return '✨ Created';
+      case 'updated': return '✏️ Updated';
+      case 'closed': return '🔒 Closed';
+      case 'reopened': return '🔓 Reopened';
+      case 'assigned': return '📥 Assigned';
+      case 'unassigned': return '📤 Unassigned';
+      default: return action;
+    }
+  }
+
   // Filter posts by search
   $: filteredPosts = filterPosts(posts, searchQuery);
 
@@ -51,11 +184,113 @@
     const returnUrl = `/groups/${group.id}/posts`;
     goto(`/blog?edit=${post.id}&return=${encodeURIComponent(returnUrl)}`);
   }
+
+  // Delete functionality
+  async function deletePost(postId) {
+    if (!confirm('Are you sure you want to delete this post? This action cannot be undone.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/posts/${postId}`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Clear selected post and reload
+        selectedPost = null;
+        selectedPostId = null;
+        postHistory = [];
+        // Reload group posts
+        await loadGroupPosts(group.id);
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error deleting post:', error);
+      alert('Failed to delete post');
+    }
+  }
+
+  // Close/Reopen functionality
+  async function closePostAction(postId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/close`, {
+        method: 'POST'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Reload post to get updated state
+        await viewPost({ id: postId });
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error closing post:', error);
+      alert('Failed to close post');
+    }
+  }
+
+  async function reopenPost(postId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/close`, {
+        method: 'DELETE'
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        // Reload post to get updated state
+        await viewPost({ id: postId });
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error reopening post:', error);
+      alert('Failed to reopen post');
+    }
+  }
+
+  // Assignment functionality
+  async function assignPost(postId, userId) {
+    try {
+      const response = await fetch(`/api/posts/${postId}/assign`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId })
+      });
+      const result = await response.json();
+
+      if (result.success) {
+        showAssignDropdown = false;
+        // Reload post to get updated state
+        await viewPost({ id: postId });
+      } else {
+        alert(`Error: ${result.error}`);
+      }
+    } catch (error) {
+      console.error('Error assigning post:', error);
+      alert('Failed to assign post');
+    }
+  }
+
+  function claimPost(postId) {
+    if (data.user) {
+      assignPost(postId, data.user.id);
+    }
+  }
+
+  function unassignPost(postId) {
+    assignPost(postId, null);
+  }
 </script>
 
 <svelte:head>
   <title>{group?.name || 'Group'} Posts</title>
 </svelte:head>
+
+<svelte:window on:click={() => { if (showAssignDropdown) showAssignDropdown = false; }} />
 
 <div class="group-posts-explorer">
   <!-- Left Sidebar: Groups List -->
@@ -67,15 +302,53 @@
     <div class="groups-list">
       <!-- Virtual groups (Public, Private) -->
       {#each virtualGroups as vg}
-        <a
-          href="/groups/{vg.id}/posts"
-          class="group-item"
-          class:active={group && group.id === vg.id}
-        >
-          <span class="group-icon">{vg.icon}</span>
-          <span class="group-name">{vg.name}</span>
-          <span class="post-count">{vg.post_count}</span>
-        </a>
+        <div class="tree-item">
+          <div
+            class="tree-node group-node"
+            class:active={group && group.id === vg.id}
+            class:expanded={expandedGroups[vg.id]}
+          >
+            <button
+              class="expand-btn"
+              on:click|stopPropagation={() => toggleGroup(vg.id)}
+            >
+              {expandedGroups[vg.id] ? '▼' : '▶'}
+            </button>
+            <a href="/groups/{vg.id}/posts" class="group-link">
+              <span class="group-icon">{vg.icon}</span>
+              <span class="group-name">{vg.name}</span>
+              <span class="post-count">{vg.post_count}</span>
+            </a>
+          </div>
+
+          {#if expandedGroups[vg.id]}
+            <ul class="posts-tree">
+              {#if loadingGroups[vg.id]}
+                <li class="loading-item">Loading...</li>
+              {:else if groupPosts[vg.id]?.length > 0}
+                {#each groupPosts[vg.id] as post}
+                  <li class="post-item">
+                    <button
+                      class="post-link"
+                      class:selected={selectedPostId === post.id}
+                      on:click={() => viewPost(post)}
+                    >
+                      <span class="post-icon">📄</span>
+                      <span class="post-title-text">
+                        {#if post.category_post_number && post.category}
+                          <span class="post-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}:</span>
+                        {/if}
+                        {post.title}
+                      </span>
+                    </button>
+                  </li>
+                {/each}
+              {:else}
+                <li class="empty-item">No posts</li>
+              {/if}
+            </ul>
+          {/if}
+        </div>
       {/each}
 
       <!-- Separator -->
@@ -87,15 +360,53 @@
 
       <!-- Real groups -->
       {#each allGroups as g}
-        <a
-          href="/groups/{g.id}/posts"
-          class="group-item"
-          class:active={group && group.id === g.id}
-        >
-          <span class="group-icon">{g.icon}</span>
-          <span class="group-name">{g.name}</span>
-          <span class="post-count">{g.post_count}</span>
-        </a>
+        <div class="tree-item">
+          <div
+            class="tree-node group-node"
+            class:active={group && group.id === g.id}
+            class:expanded={expandedGroups[g.id]}
+          >
+            <button
+              class="expand-btn"
+              on:click|stopPropagation={() => toggleGroup(g.id)}
+            >
+              {expandedGroups[g.id] ? '▼' : '▶'}
+            </button>
+            <a href="/groups/{g.id}/posts" class="group-link">
+              <span class="group-icon">{g.icon}</span>
+              <span class="group-name">{g.name}</span>
+              <span class="post-count">{g.post_count}</span>
+            </a>
+          </div>
+
+          {#if expandedGroups[g.id]}
+            <ul class="posts-tree">
+              {#if loadingGroups[g.id]}
+                <li class="loading-item">Loading...</li>
+              {:else if groupPosts[g.id]?.length > 0}
+                {#each groupPosts[g.id] as post}
+                  <li class="post-item">
+                    <button
+                      class="post-link"
+                      class:selected={selectedPostId === post.id}
+                      on:click={() => viewPost(post)}
+                    >
+                      <span class="post-icon">📄</span>
+                      <span class="post-title-text">
+                        {#if post.category_post_number && post.category}
+                          <span class="post-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}:</span>
+                        {/if}
+                        {post.title}
+                      </span>
+                    </button>
+                  </li>
+                {/each}
+              {:else}
+                <li class="empty-item">No posts</li>
+              {/if}
+            </ul>
+          {/if}
+        </div>
       {/each}
 
       {#if virtualGroups.length === 0 && allGroups.length === 0}
@@ -118,6 +429,117 @@
         <div class="welcome-icon">📂</div>
         <h2>Select a Category</h2>
         <p>Choose a category from the sidebar to view posts</p>
+      </div>
+    {:else if loadingPost}
+      <div class="loading-state">
+        <div class="spinner"></div>
+        <p>Loading post...</p>
+      </div>
+    {:else if postError}
+      <div class="error-state">
+        <div class="error-icon">⚠️</div>
+        <h3>Error Loading Post</h3>
+        <p>{postError}</p>
+        <button class="btn-back" on:click={closePost}>← Back to list</button>
+      </div>
+    {:else if selectedPost}
+      <!-- Post View -->
+      <div class="post-view">
+        <header class="post-view-header">
+          <button class="btn-back-link" on:click={closePost}>← Back to list</button>
+
+          <div class="post-status-badges">
+            {#if selectedPost.closed_at}
+              <span class="status-badge closed">🔒 Closed</span>
+            {/if}
+            {#if selectedPost.assigned_user}
+              <span class="status-badge assigned">👤 {selectedPost.assigned_user.name}</span>
+            {/if}
+          </div>
+
+          <h1 class="post-view-title">
+            {#if selectedPost.category_post_number && selectedPost.category}
+              <span class="title-prefix">{selectedPost.category.substring(0, 3).toUpperCase()} #{selectedPost.category_post_number}:</span>
+            {/if}
+            {selectedPost.title}
+          </h1>
+
+          <div class="post-view-meta">
+            <span>👤 {selectedPost.author}</span>
+            <span>📅 {formatDate(selectedPost.created_at)}</span>
+            <span>⏱️ {selectedPost.read_time}</span>
+          </div>
+
+          <div class="post-view-actions">
+            {#if selectedPost.can_write}
+              <button class="btn-action edit" on:click={() => editPost(selectedPost)}>
+                Edit
+              </button>
+              <button class="btn-action delete" on:click={() => deletePost(selectedPost.id)}>
+                Delete
+              </button>
+            {/if}
+
+            <!-- Close/Reopen button -->
+            {#if selectedPost.can_close}
+              {#if selectedPost.closed_at}
+                <button class="btn-action reopen" on:click={() => reopenPost(selectedPost.id)}>
+                  Reopen
+                </button>
+              {:else}
+                <button class="btn-action close" on:click={() => closePostAction(selectedPost.id)}>
+                  Close
+                </button>
+              {/if}
+            {/if}
+
+            <!-- Assign dropdown -->
+            {#if selectedPost.can_assign}
+              <div class="assign-dropdown-container">
+                {#if !selectedPost.assigned_user}
+                  <button class="btn-action claim" on:click={() => claimPost(selectedPost.id)}>
+                    Claim
+                  </button>
+                {/if}
+                <button
+                  class="btn-action assign"
+                  on:click|stopPropagation={() => showAssignDropdown = !showAssignDropdown}
+                >
+                  {selectedPost.assigned_user ? 'Reassign' : 'Assign'}
+                </button>
+
+                {#if showAssignDropdown}
+                  <div class="assign-dropdown" on:click|stopPropagation>
+                    {#if selectedPost.assigned_user}
+                      <button class="dropdown-item unassign" on:click={() => unassignPost(selectedPost.id)}>
+                        Unassign
+                      </button>
+                    {/if}
+                    {#each selectedPost.assignable_users || [] as assignee}
+                      <button
+                        class="dropdown-item"
+                        class:current={selectedPost.assigned_user?.id === assignee.id}
+                        on:click={() => assignPost(selectedPost.id, assignee.id)}
+                      >
+                        {assignee.display_name}
+                        {#if selectedPost.assigned_user?.id === assignee.id}
+                          (current)
+                        {/if}
+                      </button>
+                    {/each}
+                    {#if !selectedPost.assignable_users?.length}
+                      <div class="dropdown-empty">No assignable users</div>
+                    {/if}
+                  </div>
+                {/if}
+              </div>
+            {/if}
+          </div>
+        </header>
+
+        <div class="post-view-body">
+          {@html selectedPost.content}
+        </div>
       </div>
     {:else}
       <!-- Group Header -->
@@ -301,6 +723,53 @@
       </div>
     {/if}
   </main>
+
+  <!-- Right Panel: History -->
+  {#if selectedPost && showHistoryPanel}
+    <aside class="history-panel">
+      <div class="panel-header">
+        <h3>📜 History</h3>
+        <button class="btn-close-panel" on:click={() => showHistoryPanel = false} title="Close panel">
+          ✕
+        </button>
+      </div>
+
+      <div class="history-content">
+        {#if loadingHistory}
+          <div class="history-loading">Loading history...</div>
+        {:else if postHistory.length === 0}
+          <div class="history-empty">No history available</div>
+        {:else}
+          <ul class="history-list">
+            {#each postHistory as entry}
+              <li class="history-entry">
+                <div class="history-action {entry.action}">
+                  {getHistoryActionLabel(entry.action)}
+                </div>
+                {#if entry.action === 'assigned' && entry.target_user_name}
+                  <div class="history-user">📥 To: {entry.target_user_name}</div>
+                  <div class="history-user secondary">By: {entry.user_name}</div>
+                {:else if entry.action === 'unassigned' && entry.target_user_name}
+                  <div class="history-user">📤 Was: {entry.target_user_name}</div>
+                  <div class="history-user secondary">By: {entry.user_name}</div>
+                {:else}
+                  <div class="history-user">👤 {entry.user_name}</div>
+                {/if}
+                <div class="history-date">{formatHistoryDate(entry.created_at)}</div>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    </aside>
+  {/if}
+
+  <!-- Toggle button when panel is hidden -->
+  {#if selectedPost && !showHistoryPanel}
+    <button class="btn-show-history" on:click={() => showHistoryPanel = true} title="Show history">
+      📜
+    </button>
+  {/if}
 </div>
 
 <style>
@@ -309,6 +778,11 @@
     grid-template-columns: 280px 1fr;
     height: calc(100vh - 120px);
     background: #f9fafb;
+    position: relative;
+  }
+
+  .group-posts-explorer:has(.history-panel) {
+    grid-template-columns: 280px 1fr 280px;
   }
 
   /* Sidebar */
@@ -356,24 +830,58 @@
     margin-left: 0.5rem;
   }
 
-  .group-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem;
-    border-radius: 6px;
-    text-decoration: none;
-    color: #374151;
-    transition: all 0.2s;
-    margin-bottom: 0.25rem;
+  /* Tree View Styles */
+  .tree-item {
+    margin-bottom: 0.125rem;
   }
 
-  .group-item:hover {
+  .tree-node {
+    display: flex;
+    align-items: center;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+
+  .tree-node:hover {
     background: #f3f4f6;
   }
 
-  .group-item.active {
+  .tree-node.active {
     background: #eff6ff;
+  }
+
+  .expand-btn {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.625rem;
+    color: #6b7280;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex-shrink: 0;
+    transition: color 0.2s;
+  }
+
+  .expand-btn:hover {
+    color: #2563eb;
+  }
+
+  .group-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 0.75rem 0.5rem 0;
+    text-decoration: none;
+    color: #374151;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .tree-node.active .group-link {
     color: #2563eb;
     font-weight: 500;
   }
@@ -387,6 +895,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-size: 0.875rem;
   }
 
   .post-count {
@@ -394,13 +903,78 @@
     color: #6b7280;
     padding: 0.125rem 0.5rem;
     border-radius: 9999px;
-    font-size: 0.75rem;
+    font-size: 0.625rem;
+    font-weight: 500;
+    flex-shrink: 0;
+  }
+
+  .tree-node.active .post-count {
+    background: #dbeafe;
+    color: #2563eb;
+  }
+
+  /* Posts Tree (inside expanded group) */
+  .posts-tree {
+    list-style: none;
+    margin: 0;
+    padding: 0 0 0 1.5rem;
+  }
+
+  .post-item {
+    margin: 0;
+  }
+
+  .post-link {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.375rem 0.75rem;
+    background: none;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    width: 100%;
+    border-radius: 4px;
+    transition: all 0.2s;
+    color: #374151;
+  }
+
+  .post-link:hover {
+    background: #f3f4f6;
+  }
+
+  .post-link.selected {
+    background: #dbeafe;
+    color: #1e40af;
     font-weight: 500;
   }
 
-  .group-item.active .post-count {
-    background: #dbeafe;
+  .post-icon {
+    font-size: 0.875rem;
+    flex-shrink: 0;
+  }
+
+  .post-title-text {
+    flex: 1;
+    font-size: 0.8rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .post-prefix {
     color: #2563eb;
+    font-weight: 600;
+    font-size: 0.7rem;
+    margin-right: 0.25rem;
+  }
+
+  .loading-item,
+  .empty-item {
+    padding: 0.5rem 0.75rem;
+    font-size: 0.75rem;
+    color: #9ca3af;
+    font-style: italic;
   }
 
   .empty-groups {
@@ -681,13 +1255,437 @@
     background: #dbeafe;
   }
 
+  /* Loading State */
+  .loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    padding: 3rem;
+    color: #6b7280;
+  }
+
+  .spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #e5e7eb;
+    border-top-color: #2563eb;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 1rem;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  /* Post View */
+  .post-view {
+    padding: 2rem;
+  }
+
+  .post-view-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1.5rem;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .btn-back-link {
+    background: none;
+    border: none;
+    color: #6b7280;
+    cursor: pointer;
+    font-size: 0.875rem;
+    padding: 0;
+    margin-bottom: 1rem;
+    display: inline-block;
+    transition: color 0.2s;
+  }
+
+  .btn-back-link:hover {
+    color: #2563eb;
+  }
+
+  .post-status-badges {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .status-badge {
+    padding: 0.25rem 0.75rem;
+    border-radius: 9999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  .status-badge.closed {
+    background: #fef2f2;
+    color: #dc2626;
+  }
+
+  .status-badge.assigned {
+    background: #eff6ff;
+    color: #2563eb;
+  }
+
+  .post-view-title {
+    font-size: 1.75rem;
+    font-weight: 600;
+    color: #1f2937;
+    margin: 0 0 1rem 0;
+    line-height: 1.3;
+  }
+
+  .post-view-title .title-prefix {
+    color: #2563eb;
+    font-size: 0.8em;
+    margin-right: 0.25rem;
+  }
+
+  .post-view-meta {
+    display: flex;
+    gap: 1.5rem;
+    font-size: 0.875rem;
+    color: #6b7280;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .post-view-actions {
+    margin-top: 1rem;
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .btn-action.delete {
+    background: #fef2f2;
+    border-color: #fecaca;
+    color: #dc2626;
+  }
+
+  .btn-action.delete:hover {
+    background: #fee2e2;
+  }
+
+  .btn-action.close {
+    background: #fef3c7;
+    border-color: #fcd34d;
+    color: #92400e;
+  }
+
+  .btn-action.close:hover {
+    background: #fde68a;
+  }
+
+  .btn-action.reopen {
+    background: #d1fae5;
+    border-color: #6ee7b7;
+    color: #059669;
+  }
+
+  .btn-action.reopen:hover {
+    background: #a7f3d0;
+  }
+
+  .btn-action.claim {
+    background: #ede9fe;
+    border-color: #c4b5fd;
+    color: #7c3aed;
+  }
+
+  .btn-action.claim:hover {
+    background: #ddd6fe;
+  }
+
+  .btn-action.assign {
+    background: #e0e7ff;
+    border-color: #a5b4fc;
+    color: #4f46e5;
+  }
+
+  .btn-action.assign:hover {
+    background: #c7d2fe;
+  }
+
+  /* Assign Dropdown */
+  .assign-dropdown-container {
+    position: relative;
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .assign-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 0.25rem;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    box-shadow: 0 10px 15px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    z-index: 100;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+
+  .dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 0.625rem 1rem;
+    text-align: left;
+    border: none;
+    background: none;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: #374151;
+    transition: background 0.2s;
+  }
+
+  .dropdown-item:hover {
+    background: #f3f4f6;
+  }
+
+  .dropdown-item.current {
+    background: #eff6ff;
+    color: #2563eb;
+    font-weight: 500;
+  }
+
+  .dropdown-item.unassign {
+    color: #dc2626;
+    border-bottom: 1px solid #e5e7eb;
+  }
+
+  .dropdown-item.unassign:hover {
+    background: #fef2f2;
+  }
+
+  .dropdown-empty {
+    padding: 1rem;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .post-view-body {
+    font-size: 1rem;
+    line-height: 1.7;
+    color: #374151;
+  }
+
+  .post-view-body h1,
+  .post-view-body h2,
+  .post-view-body h3 {
+    color: #1f2937;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .post-view-body p {
+    margin-bottom: 1rem;
+  }
+
+  .post-view-body ul,
+  .post-view-body ol {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+  }
+
+  .post-view-body code {
+    background: #f3f4f6;
+    padding: 0.125rem 0.375rem;
+    border-radius: 4px;
+    font-size: 0.875em;
+  }
+
+  .post-view-body pre {
+    background: #1f2937;
+    color: #f9fafb;
+    padding: 1rem;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin-bottom: 1rem;
+  }
+
+  .post-view-body pre code {
+    background: none;
+    padding: 0;
+  }
+
+  /* History Panel */
+  .history-panel {
+    width: 280px;
+    background: white;
+    border-left: 1px solid #e5e7eb;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid #e5e7eb;
+    background: #f9fafb;
+  }
+
+  .panel-header h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #1f2937;
+  }
+
+  .btn-close-panel {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: transparent;
+    color: #6b7280;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+  }
+
+  .btn-close-panel:hover {
+    background: #e5e7eb;
+    color: #1f2937;
+  }
+
+  .history-content {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0.5rem;
+  }
+
+  .history-loading,
+  .history-empty {
+    padding: 2rem 1rem;
+    text-align: center;
+    color: #9ca3af;
+    font-size: 0.875rem;
+  }
+
+  .history-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .history-entry {
+    padding: 0.75rem;
+    border-radius: 6px;
+    margin-bottom: 0.5rem;
+    background: #f9fafb;
+    transition: background 0.2s;
+  }
+
+  .history-entry:hover {
+    background: #f3f4f6;
+  }
+
+  .history-action {
+    font-size: 0.75rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+
+  .history-action.created {
+    color: #059669;
+  }
+
+  .history-action.updated {
+    color: #2563eb;
+  }
+
+  .history-action.closed {
+    color: #dc2626;
+  }
+
+  .history-action.reopened {
+    color: #059669;
+  }
+
+  .history-action.assigned {
+    color: #7c3aed;
+  }
+
+  .history-action.unassigned {
+    color: #6b7280;
+  }
+
+  .history-user {
+    font-size: 0.8rem;
+    color: #374151;
+    margin-bottom: 0.125rem;
+  }
+
+  .history-user.secondary {
+    color: #9ca3af;
+    font-size: 0.75rem;
+  }
+
+  .history-date {
+    font-size: 0.7rem;
+    color: #9ca3af;
+    margin-top: 0.25rem;
+  }
+
+  .btn-show-history {
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 40px;
+    height: 40px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    border-radius: 50%;
+    cursor: pointer;
+    font-size: 1.25rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    transition: all 0.2s;
+    z-index: 10;
+  }
+
+  .btn-show-history:hover {
+    background: #f3f4f6;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
+  }
+
   /* Responsive */
   @media (max-width: 768px) {
     .group-posts-explorer {
       grid-template-columns: 1fr;
     }
 
+    .group-posts-explorer:has(.history-panel) {
+      grid-template-columns: 1fr;
+    }
+
     .sidebar {
+      display: none;
+    }
+
+    .history-panel {
+      display: none;
+    }
+
+    .btn-show-history {
       display: none;
     }
 

@@ -1,24 +1,41 @@
-import { blogDB, pathsDB } from '$lib/db.js';
-import { canReadPost } from '$lib/server/permissions.js';
+import { blogDB, pathsDB, categoryDB } from '$lib/db.js';
+import { canReadPost, canWritePost } from '$lib/server/permissions.js';
+import { getDefaultCategories } from '$lib/categories.js';
 
 export async function load({ url, locals }) {
   try {
     console.log('🔍 Blog page loading...', new Date().toISOString());
-    
+
+    const userId = locals.user?.id || null;
+    const userRole = locals.user?.role || 'user';
+
     // Check for edit parameter
     const editPostId = url.searchParams.get('edit');
     let editPost = null;
-    
+
     if (editPostId) {
       try {
-        // ✅ FIXED: Added await
-        editPost = await blogDB.getPostById(parseInt(editPostId));
-        console.log('✏️ Loading post for editing:', editPostId, editPost ? 'found' : 'not found');
+        const postId = parseInt(editPostId);
+        const post = await blogDB.getPostById(postId);
+
+        if (post) {
+          // Check if user has write permission
+          const canWrite = await canWritePost(postId, userId, userRole);
+
+          if (canWrite) {
+            editPost = post;
+            console.log('✏️ Loading post for editing:', editPostId, '- permission granted');
+          } else {
+            console.log('⛔ Edit access denied for post:', editPostId, '- user lacks write permission');
+          }
+        } else {
+          console.log('❌ Post not found for editing:', editPostId);
+        }
       } catch (error) {
         console.error('❌ Error loading post for editing:', error);
       }
     }
-    
+
     // Get search parameters
     const searchQuery = url.searchParams.get('search') || '';
     const categoryFilter = url.searchParams.get('category') || '';
@@ -41,8 +58,6 @@ export async function load({ url, locals }) {
     console.log('📄 Posts loaded:', posts.length);
 
     // Filter posts based on read permissions
-    const userId = locals.user?.id || null;
-    const userRole = locals.user?.role || 'user';
     const filteredPosts = [];
 
     for (const post of posts) {
@@ -64,12 +79,27 @@ export async function load({ url, locals }) {
     // ✅ FIXED: Replaced db.prepare() with pathsDB.getAllPaths()
     const paths = await pathsDB.getAllPaths();
 
+    // Load available categories from database (for creating/editing posts)
+    let availableCategories;
+    try {
+      availableCategories = await categoryDB.getAllCategories();
+      if (!availableCategories || availableCategories.length === 0) {
+        // Fall back to defaults if database table is empty or doesn't exist
+        availableCategories = getDefaultCategories();
+      }
+    } catch (err) {
+      // Fall back to defaults if database table doesn't exist yet
+      console.log('📂 Categories table not found, using defaults');
+      availableCategories = getDefaultCategories();
+    }
+
     return {
       posts: filteredPosts,
       categories,
       authors,
       stats,
       paths,
+      availableCategories,
       searchQuery,
       categoryFilter,
       authorFilter,
@@ -84,6 +114,7 @@ export async function load({ url, locals }) {
       authors: [],
       stats: { published_posts: 0, total_posts: 0 },
       paths: [],
+      availableCategories: getDefaultCategories(),
       searchQuery: '',
       categoryFilter: '',
       authorFilter: '',

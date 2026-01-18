@@ -1,9 +1,26 @@
 <script>
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import PathPostTree from './PathPostTree.svelte';
 
   export let user = null;
+
+  // Panel resize state
+  let leftPanelWidth = 400;
+  let rightPanelWidth = 280;
+  let isResizingLeft = false;
+  let isResizingRight = false;
+  let containerRef;
+
+  // Min/max panel widths
+  const MIN_LEFT_WIDTH = 200;
+  const MAX_LEFT_WIDTH = 600;
+  const MIN_RIGHT_WIDTH = 200;
+  const MAX_RIGHT_WIDTH = 400;
+
+  // Collapsed states
+  let leftPanelCollapsed = false;
+  let rightPanelCollapsed = false;
 
   // History panel state
   let showHistoryPanel = true;
@@ -20,6 +37,7 @@
   let selectedPathId = null;
   let expandPathIds = [];
   let searchQuery = '';
+  let returnUrl = null;
 
   // Reactive filtered data based on search
   $: searchResults = filterBySearch(paths, posts, searchQuery);
@@ -47,6 +65,13 @@
       // Set the last (deepest) path as selected
       selectedPathId = expandPathIds[0];
     }
+
+    // Check for return URL
+    returnUrl = urlParams.get('return');
+
+    // Setup resize handlers
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   });
 
   async function loadHierarchy() {
@@ -362,12 +387,81 @@
       default: return action;
     }
   }
+
+  // Panel resize handlers
+  function startResizeLeft(e) {
+    isResizingLeft = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function startResizeRight(e) {
+    isResizingRight = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function handleMouseMove(e) {
+    if (!containerRef) return;
+
+    if (isResizingLeft) {
+      const containerRect = containerRef.getBoundingClientRect();
+      let newWidth = e.clientX - containerRect.left;
+      newWidth = Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, newWidth));
+      leftPanelWidth = newWidth;
+    }
+
+    if (isResizingRight) {
+      const containerRect = containerRef.getBoundingClientRect();
+      let newWidth = containerRect.right - e.clientX;
+      newWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, newWidth));
+      rightPanelWidth = newWidth;
+    }
+  }
+
+  function handleMouseUp() {
+    isResizingLeft = false;
+    isResizingRight = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+
+  function toggleLeftPanel() {
+    leftPanelCollapsed = !leftPanelCollapsed;
+  }
+
+  function toggleRightPanel() {
+    rightPanelCollapsed = !rightPanelCollapsed;
+  }
+
+  // Cleanup resize handlers
+  onDestroy(() => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+  });
 </script>
 
-<div class="confluence-explorer">
+<div
+  class="confluence-explorer"
+  class:resizing={isResizingLeft || isResizingRight}
+  bind:this={containerRef}
+  style="--left-panel-width: {leftPanelCollapsed ? 0 : leftPanelWidth}px; --right-panel-width: {rightPanelCollapsed ? 0 : rightPanelWidth}px;"
+>
+  <!-- Left Panel Collapse Toggle (when collapsed) -->
+  {#if leftPanelCollapsed}
+    <button class="panel-expand-btn left" on:click={toggleLeftPanel} title="Show sidebar">
+      ▶
+    </button>
+  {/if}
+
   <!-- Left Sidebar: Path & Post Tree -->
-  <aside class="sidebar">
+  <aside class="sidebar" class:collapsed={leftPanelCollapsed}>
     <div class="sidebar-header">
+      <button class="btn-collapse" on:click={toggleLeftPanel} title="Collapse sidebar">
+        ◀
+      </button>
       <h3>📁 Content</h3>
       <button
         class="btn-new-post"
@@ -422,7 +516,18 @@
     </div>
   </aside>
 
-  <!-- Right Content Area -->
+  <!-- Left Resize Handle -->
+  {#if !leftPanelCollapsed}
+    <div
+      class="resize-handle left"
+      on:mousedown={startResizeLeft}
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="0"
+    ></div>
+  {/if}
+
+  <!-- Main Content Area -->
   <main class="content-area">
     {#if loading}
       <div class="loading-state">
@@ -436,8 +541,14 @@
         <p>{error}</p>
       </div>
     {:else if selectedPost}
-      <!-- Breadcrumbs -->
+      <!-- Back button and Breadcrumbs -->
       <nav class="breadcrumbs">
+        {#if returnUrl}
+          <button class="back-btn" on:click={() => goto(returnUrl)}>
+            ← Back
+          </button>
+          <span class="separator">|</span>
+        {/if}
         <button class="breadcrumb-item" on:click={() => {
           selectedPost = null;
           currentPostId = null;
@@ -609,12 +720,23 @@
     {/if}
   </main>
 
+  <!-- Right Resize Handle -->
+  {#if selectedPost && showHistoryPanel}
+    <div
+      class="resize-handle right"
+      on:mousedown={startResizeRight}
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="0"
+    ></div>
+  {/if}
+
   <!-- Right Panel: History -->
   {#if selectedPost && showHistoryPanel}
     <aside class="history-panel">
       <div class="panel-header">
         <h3>📜 History</h3>
-        <button class="btn-close-panel" on:click={() => showHistoryPanel = false} title="Close panel">
+        <button class="btn-close-panel" on:click={() => showHistoryPanel = false} title="Collapse panel">
           ✕
         </button>
       </div>
@@ -659,11 +781,79 @@
 
 <style>
   .confluence-explorer {
-    display: grid;
-    grid-template-columns: 400px 1fr auto;
-    height: calc(100vh - 120px);
+    display: flex;
+    height: 100vh;
     background: #f9fafb;
     position: relative;
+  }
+
+  .confluence-explorer.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  /* Resize Handles */
+  .resize-handle {
+    width: 6px;
+    background: #e5e7eb;
+    cursor: col-resize;
+    transition: background 0.2s;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .resize-handle:hover,
+  .resize-handle:active {
+    background: #2563eb;
+  }
+
+  .resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 40px;
+    background: #9ca3af;
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .resize-handle:hover::after {
+    opacity: 1;
+    background: white;
+  }
+
+  /* Panel Expand Buttons */
+  .panel-expand-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 24px;
+    height: 48px;
+    background: white;
+    border: 1px solid #e5e7eb;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    color: #6b7280;
+    transition: all 0.2s;
+    z-index: 20;
+  }
+
+  .panel-expand-btn.left {
+    left: 0;
+    border-left: none;
+    border-radius: 0 6px 6px 0;
+  }
+
+  .panel-expand-btn:hover {
+    background: #f3f4f6;
+    color: #2563eb;
   }
 
   /* Sidebar */
@@ -673,6 +863,15 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    width: var(--left-panel-width);
+    flex-shrink: 0;
+  }
+
+  .sidebar.collapsed {
+    width: 0;
+    min-width: 0;
+    border: none;
+    overflow: hidden;
   }
 
   .sidebar-header {
@@ -681,12 +880,35 @@
     align-items: center;
     padding: 1rem 1.25rem;
     border-bottom: 1px solid #e5e7eb;
+    gap: 0.5rem;
   }
 
   .sidebar-header h3 {
     margin: 0;
     font-size: 1rem;
     font-weight: 600;
+    color: #1f2937;
+    flex: 1;
+  }
+
+  .btn-collapse {
+    width: 28px;
+    height: 28px;
+    border: none;
+    background: #f3f4f6;
+    color: #6b7280;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+  }
+
+  .btn-collapse:hover {
+    background: #e5e7eb;
     color: #1f2937;
   }
 
@@ -782,6 +1004,8 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-width: 0;
   }
 
   /* States */
@@ -834,6 +1058,23 @@
     flex-wrap: wrap;
   }
 
+  .back-btn {
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    color: #374151;
+    cursor: pointer;
+    font-size: 0.875rem;
+    padding: 0.25rem 0.75rem;
+    border-radius: 4px;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+
+  .back-btn:hover {
+    background: #e5e7eb;
+    color: #1f2937;
+  }
+
   .breadcrumb-item {
     background: none;
     border: none;
@@ -874,11 +1115,11 @@
   }
 
   .post-title {
-    font-size: 2.5rem;
-    font-weight: 700;
+    font-size: 1.75rem;
+    font-weight: 600;
     color: #1f2937;
-    margin: 0 0 1rem 0;
-    line-height: 1.2;
+    margin: 0 0 0.75rem 0;
+    line-height: 1.3;
   }
 
   .title-prefix {
@@ -1140,12 +1381,13 @@
 
   /* History Panel */
   .history-panel {
-    width: 280px;
+    width: var(--right-panel-width);
     background: white;
     border-left: 1px solid #e5e7eb;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex-shrink: 0;
   }
 
   .panel-header {
@@ -1291,10 +1533,18 @@
   /* Responsive */
   @media (max-width: 900px) {
     .confluence-explorer {
-      grid-template-columns: 1fr;
+      flex-direction: column;
     }
 
     .sidebar {
+      display: none;
+    }
+
+    .resize-handle {
+      display: none;
+    }
+
+    .panel-expand-btn {
       display: none;
     }
 

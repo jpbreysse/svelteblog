@@ -8,7 +8,7 @@
     import { PUBLIC_APP_NAME, PUBLIC_APP_DESCRIPTION } from '$env/static/public';
     import ReportModal from '$lib/components/ReportModal.svelte';
     import PostPermissions from '$lib/components/PostPermissions.svelte';
-    import { getCategories, getDefaultCategory } from '$lib/categories';
+    import { getDefaultCategory } from '$lib/categories';
     
     export let data;
     
@@ -27,9 +27,9 @@
       editPost(data.editPost);
     }
     
-    // Get available categories from environment
-    const availableCategories = getCategories();
-    const defaultCategory = getDefaultCategory();
+    // Get available categories from server (loaded from database)
+    $: availableCategories = data.availableCategories || [];
+    $: defaultCategory = getDefaultCategory(availableCategories);
     
     // Debug reactive updates
     $: console.log('🔄 Posts updated, count:', posts.length);

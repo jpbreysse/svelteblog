@@ -76,14 +76,17 @@
     <!-- Admin Navigation -->
     <div class="admin-nav">
       <a href="/admin/posts" class="nav-link posts-link">
-        📝 Posts Management
+        Posts Management
         <span class="info-badge">{data.postStats?.total || 0} posts</span>
       </a>
       <a href="/admin/groups" class="nav-link groups-link">
-        👥 Groups Management
+        Groups Management
+      </a>
+      <a href="/admin/categories" class="nav-link categories-link">
+        Categories
       </a>
       <a href="/admin/reports" class="nav-link reports-link">
-        📝 Content Reports
+        Content Reports
         {#if data.reportStats && data.reportStats.pending > 0}
           <span class="badge">{data.reportStats.pending}</span>
         {/if}
@@ -288,6 +291,14 @@
 
   .nav-link.groups-link:hover {
     background: #6d28d9;
+  }
+
+  .nav-link.categories-link {
+    background: #0891b2;
+  }
+
+  .nav-link.categories-link:hover {
+    background: #0e7490;
   }
 
     .badge {

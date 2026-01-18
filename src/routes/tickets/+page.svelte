@@ -88,7 +88,7 @@
   }
 
   function viewPost(post) {
-    goto(`/explorer?post=${post.id}`);
+    goto(`/explorer?post=${post.id}&return=/tickets`);
   }
 
   function editPost(post) {
@@ -259,12 +259,12 @@
                 </div>
               </td>
               <td class="col-title">
-                <button class="title-link" on:click={() => viewPost(post)}>
+                <span class="title-text">
                   {#if post.category_post_number && post.category}
                     <span class="title-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}</span>
                   {/if}
                   {post.title}
-                </button>
+                </span>
               </td>
               <td class="col-author">
                 <span class="author-name">{post.author_name}</span>
@@ -554,20 +554,9 @@
   }
 
   /* Title */
-  .title-link {
-    background: none;
-    border: none;
-    color: #2563eb;
-    text-align: left;
-    cursor: pointer;
+  .title-text {
+    color: #1f2937;
     font-size: 0.875rem;
-    padding: 0;
-    transition: color 0.2s;
-  }
-
-  .title-link:hover {
-    color: #1d4ed8;
-    text-decoration: underline;
   }
 
   .title-prefix {

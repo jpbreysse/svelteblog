@@ -1162,4 +1162,163 @@ export const groupDB = {
   }
 };
 
+// ============================================
+// CATEGORY Management Database Operations
+// ============================================
+
+export const categoryDB = {
+  /**
+   * Get all categories ordered by position
+   * @returns {Promise<Array>} All categories
+   */
+  async getAllCategories() {
+    const result = await pool.query(`
+      SELECT id, value, label, position, created_at
+      FROM categories
+      ORDER BY position ASC, label ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get category by ID
+   * @param {number} id - Category ID
+   * @returns {Promise<Object|null>} Category object or null
+   */
+  async getCategoryById(id) {
+    const result = await pool.query(
+      'SELECT id, value, label, position, created_at FROM categories WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get category by value
+   * @param {string} value - Category value
+   * @returns {Promise<Object|null>} Category object or null
+   */
+  async getCategoryByValue(value) {
+    const result = await pool.query(
+      'SELECT id, value, label, position, created_at FROM categories WHERE value = $1',
+      [value]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new category
+   * @param {Object} categoryData - Category data (value, label, position)
+   * @returns {Promise<Object>} Created category
+   */
+  async createCategory(categoryData) {
+    const { value, label, position = 0 } = categoryData;
+
+    // Get max position if not specified
+    let categoryPosition = position;
+    if (position === 0) {
+      const maxResult = await pool.query('SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM categories');
+      categoryPosition = maxResult.rows[0].next_pos;
+    }
+
+    const result = await pool.query(`
+      INSERT INTO categories (value, label, position)
+      VALUES ($1, $2, $3)
+      RETURNING id, value, label, position, created_at
+    `, [value.toLowerCase().replace(/[^a-z0-9-]/g, '-'), label, categoryPosition]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create category');
+    }
+
+    return {
+      success: true,
+      category: result.rows[0]
+    };
+  },
+
+  /**
+   * Update category
+   * @param {number} id - Category ID
+   * @param {Object} categoryData - Updated data (value, label, position)
+   * @returns {Promise<Object>} Success message
+   */
+  async updateCategory(id, categoryData) {
+    const { value, label, position } = categoryData;
+
+    const result = await pool.query(`
+      UPDATE categories
+      SET value = $1, label = $2, position = $3
+      WHERE id = $4
+      RETURNING id, value, label, position, created_at
+    `, [value.toLowerCase().replace(/[^a-z0-9-]/g, '-'), label, position, id]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Category not found');
+    }
+
+    return {
+      success: true,
+      category: result.rows[0]
+    };
+  },
+
+  /**
+   * Delete category
+   * @param {number} id - Category ID
+   * @returns {Promise<Object>} Success message
+   */
+  async deleteCategory(id) {
+    // Check if category is in use
+    const usageResult = await pool.query(
+      'SELECT COUNT(*) as count FROM posts WHERE category = (SELECT value FROM categories WHERE id = $1)',
+      [id]
+    );
+    const usageCount = parseInt(usageResult.rows[0].count);
+
+    if (usageCount > 0) {
+      throw new Error(`Cannot delete category: ${usageCount} posts are using it`);
+    }
+
+    const result = await pool.query(
+      'DELETE FROM categories WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Category not found');
+    }
+
+    return { success: true, message: 'Category deleted successfully' };
+  },
+
+  /**
+   * Reorder categories
+   * @param {Array} orderedIds - Array of category IDs in new order
+   * @returns {Promise<Object>} Success message
+   */
+  async reorderCategories(orderedIds) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (let i = 0; i < orderedIds.length; i++) {
+        await client.query(
+          'UPDATE categories SET position = $1 WHERE id = $2',
+          [i + 1, orderedIds[i]]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      return { success: true, message: 'Categories reordered successfully' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+};
+
 export { pathsDB } from './paths.js';
