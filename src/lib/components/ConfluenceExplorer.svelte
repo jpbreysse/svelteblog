@@ -782,9 +782,14 @@
 <style>
   .confluence-explorer {
     display: flex;
-    height: 100vh;
+    height: calc(100vh - 56px);
     background: #f9fafb;
-    position: relative;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
   }
 
   .confluence-explorer.resizing {
@@ -1103,9 +1108,7 @@
   /* Post Content */
   .post-content {
     padding: 2rem;
-    max-width: 1200px;
     width: 100%;
-    margin: 0 auto;
   }
 
   .post-header {

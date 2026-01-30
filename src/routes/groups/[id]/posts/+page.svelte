@@ -1,4 +1,5 @@
 <script>
+  import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
 
   export let data;
@@ -30,6 +31,71 @@
 
   // Assign dropdown state
   let showAssignDropdown = false;
+
+  // Panel resize state
+  let leftPanelWidth = 280;
+  let rightPanelWidth = 280;
+  let isResizingLeft = false;
+  let isResizingRight = false;
+  let containerRef;
+
+  // Min/max panel widths
+  const MIN_LEFT_WIDTH = 200;
+  const MAX_LEFT_WIDTH = 500;
+  const MIN_RIGHT_WIDTH = 200;
+  const MAX_RIGHT_WIDTH = 400;
+
+  // Panel resize handlers
+  function startResizeLeft(e) {
+    isResizingLeft = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function startResizeRight(e) {
+    isResizingRight = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }
+
+  function handleMouseMove(e) {
+    if (!containerRef) return;
+
+    if (isResizingLeft) {
+      const containerRect = containerRef.getBoundingClientRect();
+      let newWidth = e.clientX - containerRect.left;
+      newWidth = Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, newWidth));
+      leftPanelWidth = newWidth;
+    }
+
+    if (isResizingRight) {
+      const containerRect = containerRef.getBoundingClientRect();
+      let newWidth = containerRect.right - e.clientX;
+      newWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, newWidth));
+      rightPanelWidth = newWidth;
+    }
+  }
+
+  function handleMouseUp() {
+    isResizingLeft = false;
+    isResizingRight = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  }
+
+  onMount(() => {
+    if (typeof window !== 'undefined') {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+    }
+  });
+
+  onDestroy(() => {
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    }
+  });
 
   // Auto-expand current group
   $: if (group && group.id) {
@@ -292,7 +358,12 @@
 
 <svelte:window on:click={() => { if (showAssignDropdown) showAssignDropdown = false; }} />
 
-<div class="group-posts-explorer">
+<div
+  class="group-posts-explorer"
+  class:resizing={isResizingLeft || isResizingRight}
+  bind:this={containerRef}
+  style="--left-panel-width: {leftPanelWidth}px; --right-panel-width: {rightPanelWidth}px;"
+>
   <!-- Left Sidebar: Groups List -->
   <aside class="sidebar">
     <div class="sidebar-header">
@@ -414,6 +485,15 @@
       {/if}
     </div>
   </aside>
+
+  <!-- Left Resize Handle -->
+  <div
+    class="resize-handle left"
+    on:mousedown={startResizeLeft}
+    role="separator"
+    aria-orientation="vertical"
+    tabindex="0"
+  ></div>
 
   <!-- Main Content Area -->
   <main class="content-area">
@@ -724,6 +804,17 @@
     {/if}
   </main>
 
+  <!-- Right Resize Handle -->
+  {#if selectedPost && showHistoryPanel}
+    <div
+      class="resize-handle right"
+      on:mousedown={startResizeRight}
+      role="separator"
+      aria-orientation="vertical"
+      tabindex="0"
+    ></div>
+  {/if}
+
   <!-- Right Panel: History -->
   {#if selectedPost && showHistoryPanel}
     <aside class="history-panel">
@@ -774,15 +865,54 @@
 
 <style>
   .group-posts-explorer {
-    display: grid;
-    grid-template-columns: 280px 1fr;
-    height: calc(100vh - 120px);
+    display: flex;
+    height: calc(100vh - 56px);
     background: #f9fafb;
-    position: relative;
+    position: fixed;
+    top: 56px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
   }
 
-  .group-posts-explorer:has(.history-panel) {
-    grid-template-columns: 280px 1fr 280px;
+  .group-posts-explorer.resizing {
+    cursor: col-resize;
+    user-select: none;
+  }
+
+  /* Resize Handles */
+  .resize-handle {
+    width: 6px;
+    background: #e5e7eb;
+    cursor: col-resize;
+    transition: background 0.2s;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .resize-handle:hover,
+  .resize-handle:active {
+    background: #2563eb;
+  }
+
+  .resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 2px;
+    height: 40px;
+    background: #9ca3af;
+    border-radius: 1px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+
+  .resize-handle:hover::after {
+    opacity: 1;
+    background: white;
   }
 
   /* Sidebar */
@@ -792,6 +922,8 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    width: var(--left-panel-width);
+    flex-shrink: 0;
   }
 
   .sidebar-header {
@@ -990,6 +1122,8 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
+    flex: 1;
+    min-width: 0;
   }
 
   /* States */
@@ -1519,12 +1653,13 @@
 
   /* History Panel */
   .history-panel {
-    width: 280px;
+    width: var(--right-panel-width);
     background: white;
     border-left: 1px solid #e5e7eb;
     display: flex;
     flex-direction: column;
     overflow: hidden;
+    flex-shrink: 0;
   }
 
   .panel-header {
@@ -1670,14 +1805,21 @@
   /* Responsive */
   @media (max-width: 768px) {
     .group-posts-explorer {
-      grid-template-columns: 1fr;
-    }
-
-    .group-posts-explorer:has(.history-panel) {
-      grid-template-columns: 1fr;
+      position: relative;
+      top: auto;
+      left: auto;
+      right: auto;
+      bottom: auto;
+      height: auto;
+      min-height: calc(100vh - 56px);
+      flex-direction: column;
     }
 
     .sidebar {
+      display: none;
+    }
+
+    .resize-handle {
       display: none;
     }
 
