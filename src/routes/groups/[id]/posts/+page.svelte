@@ -87,6 +87,13 @@
     if (typeof window !== 'undefined') {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
+
+      // Check URL for initial post selection
+      const urlParams = new URLSearchParams(window.location.search);
+      const postId = urlParams.get('post');
+      if (postId) {
+        viewPost({ id: parseInt(postId) });
+      }
     }
   });
 
@@ -153,6 +160,13 @@
         selectedPost = result.post;
         // Load history
         loadPostHistory(post.id);
+
+        // Update URL with post ID
+        if (typeof window !== 'undefined') {
+          const url = new URL(window.location);
+          url.searchParams.set('post', post.id);
+          window.history.pushState({}, '', url);
+        }
       } else {
         postError = result.error || 'Failed to load post';
       }
@@ -188,6 +202,13 @@
     postError = null;
     postHistory = [];
     showAssignDropdown = false;
+
+    // Remove post ID from URL
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location);
+      url.searchParams.delete('post');
+      window.history.pushState({}, '', url);
+    }
   }
 
   function formatHistoryDate(date) {
