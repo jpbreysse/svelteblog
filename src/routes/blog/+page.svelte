@@ -102,7 +102,7 @@
     // Validation constants
     const VALIDATION_LIMITS = {
       title: { max: 200, warning: 180 },
-      content: { max: 50000, warning: 45000 },
+      content: { max: 500000, warning: 450000 },
       tags: { max: 10, tagLength: 30 },
       excerpt: { max: 500 }
     };
@@ -354,7 +354,7 @@
               [{ 'list': 'ordered'}, { 'list': 'bullet' }],
               [{ 'align': [] }],
               ['blockquote', 'code-block'],
-              ['link'],
+              ['link', 'image'],
               ['clean']
             ]
           }

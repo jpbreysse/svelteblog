@@ -28,7 +28,7 @@ function stripHtml(html) {
 // Validation constants (server-side safety limits)
 const VALIDATION_LIMITS = {
   title: { max: 500 },        // Generous server limit
-  content: { max: 100000 },   // Generous server limit
+  content: { max: 1000000 },  // 1MB limit for image support
   category: { max: 50 },
   tags: { max: 15, tagLength: 50 } // Generous server limits
 };

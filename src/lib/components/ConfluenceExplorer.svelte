@@ -712,10 +712,83 @@
         {/if}
       </article>
     {:else}
-      <div class="welcome-state">
-        <div class="welcome-icon">📚</div>
-        <h2>Welcome to the Content Explorer</h2>
-        <p>Select a post from the sidebar to view its content</p>
+      <!-- Posts Grid View -->
+      {@const displayPosts = selectedPathId
+        ? filteredPosts.filter(p => p.path_id === selectedPathId)
+        : filteredPosts}
+      {@const selectedPathInfo = paths.find(p => p.id === selectedPathId)}
+      <div class="posts-grid-view">
+        <header class="grid-header">
+          <div class="header-info">
+            <h1>
+              {#if selectedPathInfo}
+                {selectedPathInfo.icon || '📁'} {selectedPathInfo.name}
+              {:else}
+                📚 All Content
+              {/if}
+            </h1>
+            <p class="header-stats">
+              {displayPosts.length} {displayPosts.length === 1 ? 'post' : 'posts'}{selectedPathId ? ' in this folder' : ' total'}
+            </p>
+          </div>
+        </header>
+
+        {#if displayPosts.length > 0}
+          <div class="posts-grid">
+            {#each displayPosts as post}
+              <article class="post-card" on:click={() => loadPostContent(post.id)}>
+                <div class="post-card-header">
+                  <h3 class="post-title">
+                    {#if post.category_post_number && post.category}
+                      <span class="title-prefix">{post.category.substring(0, 3).toUpperCase()} #{post.category_post_number}:</span>
+                    {/if}
+                    {post.title}
+                  </h3>
+                </div>
+
+                <div class="post-meta">
+                  <span class="author">👤 {post.author}</span>
+                  <span class="date">📅 {formatDate(post.created_at)}</span>
+                  <span class="category">📂 {post.category}</span>
+                </div>
+
+                <div class="post-card-actions">
+                  <button class="btn-card-action" on:click|stopPropagation={() => loadPostContent(post.id)}>
+                    Read →
+                  </button>
+                  {#if canEditPost(post)}
+                    <button class="btn-card-action edit" on:click|stopPropagation={() => editPost(post)}>
+                      ✏️ Edit
+                    </button>
+                  {/if}
+                </div>
+              </article>
+            {/each}
+          </div>
+        {:else}
+          <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <h3>No posts found</h3>
+            <p>
+              {#if selectedPathId}
+                This folder doesn't have any posts yet.
+              {:else}
+                No content available. Create your first post!
+              {/if}
+            </p>
+            <button
+              class="btn-create-post"
+              on:click={() => {
+                const url = selectedPathId
+                  ? `/blog?new=true&path_id=${selectedPathId}&return=${encodeURIComponent('/explorer')}`
+                  : `/blog?new=true&return=${encodeURIComponent('/explorer')}`;
+                goto(url);
+              }}
+            >
+              ➕ Create Post
+            </button>
+          </div>
+        {/if}
       </div>
     {/if}
   </main>
@@ -1533,6 +1606,149 @@
     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.15);
   }
 
+  /* Posts Grid View */
+  .posts-grid-view {
+    padding: 2rem;
+    overflow-y: auto;
+    height: 100%;
+  }
+
+  .grid-header {
+    margin-bottom: 2rem;
+  }
+
+  .grid-header h1 {
+    margin: 0 0 0.5rem 0;
+    font-size: 1.75rem;
+    color: #1f2937;
+  }
+
+  .header-stats {
+    margin: 0;
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  .posts-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 1.5rem;
+  }
+
+  .post-card {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 1.25rem;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+
+  .post-card:hover {
+    border-color: #2563eb;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+    transform: translateY(-2px);
+  }
+
+  .post-card-header {
+    margin-bottom: 0.75rem;
+  }
+
+  .post-card .post-title {
+    margin: 0;
+    font-size: 1rem;
+    font-weight: 600;
+    color: #1f2937;
+    line-height: 1.4;
+  }
+
+  .post-card .title-prefix {
+    color: #2563eb;
+    font-size: 0.875em;
+    margin-right: 0.25rem;
+  }
+
+  .post-card .post-meta {
+    display: flex;
+    gap: 1rem;
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .post-card-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #e5e7eb;
+  }
+
+  .btn-card-action {
+    padding: 0.5rem 1rem;
+    border: 1px solid #d1d5db;
+    background: white;
+    border-radius: 6px;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #374151;
+  }
+
+  .btn-card-action:hover {
+    background: #f3f4f6;
+  }
+
+  .btn-card-action.edit {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+    color: #2563eb;
+  }
+
+  .btn-card-action.edit:hover {
+    background: #dbeafe;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 4rem 2rem;
+    text-align: center;
+    color: #6b7280;
+  }
+
+  .empty-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+  }
+
+  .empty-state h3 {
+    color: #374151;
+    margin: 0 0 0.5rem 0;
+  }
+
+  .empty-state p {
+    margin: 0 0 1.5rem 0;
+  }
+
+  .btn-create-post {
+    padding: 0.75rem 1.5rem;
+    background: #2563eb;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+  }
+
+  .btn-create-post:hover {
+    background: #1d4ed8;
+  }
+
   /* Responsive */
   @media (max-width: 900px) {
     .confluence-explorer {
@@ -1569,6 +1785,18 @@
 
     .child-pages-grid {
       grid-template-columns: 1fr;
+    }
+
+    .posts-grid-view {
+      padding: 1rem;
+    }
+
+    .posts-grid {
+      grid-template-columns: 1fr;
+    }
+
+    .grid-header h1 {
+      font-size: 1.5rem;
     }
   }
 </style>
