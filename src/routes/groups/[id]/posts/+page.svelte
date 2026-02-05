@@ -58,25 +58,52 @@
     document.body.style.userSelect = 'none';
   }
 
+  // Get clientX from mouse or touch event
+  function getClientX(e) {
+    if (e.touches && e.touches.length > 0) {
+      return e.touches[0].clientX;
+    }
+    return e.clientX;
+  }
+
   function handleMouseMove(e) {
+    handleResize(getClientX(e));
+  }
+
+  function handleTouchMove(e) {
+    if (isResizingLeft || isResizingRight) {
+      e.preventDefault(); // Prevent scrolling while resizing
+      handleResize(getClientX(e));
+    }
+  }
+
+  function handleResize(clientX) {
     if (!containerRef) return;
 
     if (isResizingLeft) {
       const containerRect = containerRef.getBoundingClientRect();
-      let newWidth = e.clientX - containerRect.left;
+      let newWidth = clientX - containerRect.left;
       newWidth = Math.max(MIN_LEFT_WIDTH, Math.min(MAX_LEFT_WIDTH, newWidth));
       leftPanelWidth = newWidth;
     }
 
     if (isResizingRight) {
       const containerRect = containerRef.getBoundingClientRect();
-      let newWidth = containerRect.right - e.clientX;
+      let newWidth = containerRect.right - clientX;
       newWidth = Math.max(MIN_RIGHT_WIDTH, Math.min(MAX_RIGHT_WIDTH, newWidth));
       rightPanelWidth = newWidth;
     }
   }
 
   function handleMouseUp() {
+    stopResize();
+  }
+
+  function handleTouchEnd() {
+    stopResize();
+  }
+
+  function stopResize() {
     isResizingLeft = false;
     isResizingRight = false;
     document.body.style.cursor = '';
@@ -87,6 +114,8 @@
     if (typeof window !== 'undefined') {
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', handleMouseUp);
+      window.addEventListener('touchmove', handleTouchMove, { passive: false });
+      window.addEventListener('touchend', handleTouchEnd);
 
       // Check URL for initial post selection
       const urlParams = new URLSearchParams(window.location.search);
@@ -101,6 +130,8 @@
     if (typeof window !== 'undefined') {
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('touchmove', handleTouchMove);
+      window.removeEventListener('touchend', handleTouchEnd);
     }
   });
 
@@ -511,6 +542,7 @@
   <div
     class="resize-handle left"
     on:mousedown={startResizeLeft}
+    on:touchstart={startResizeLeft}
     role="separator"
     aria-orientation="vertical"
     tabindex="0"
@@ -830,6 +862,7 @@
     <div
       class="resize-handle right"
       on:mousedown={startResizeRight}
+      on:touchstart={startResizeRight}
       role="separator"
       aria-orientation="vertical"
       tabindex="0"
