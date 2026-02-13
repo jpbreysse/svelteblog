@@ -1407,6 +1407,16 @@
     margin-bottom: 3rem;
   }
 
+  .post-body :global(p) {
+    margin: 1rem 0;
+  }
+
+  /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
+  .post-body :global(p:empty),
+  .post-body :global(p:has(> br:only-child)) {
+    margin: 0.25rem 0;
+  }
+
   /* Child Pages */
   .child-pages {
     margin-top: 3rem;

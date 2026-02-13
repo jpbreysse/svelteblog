@@ -1678,6 +1678,12 @@
     margin-bottom: 1rem;
   }
 
+  /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
+  .post-view-body p:empty,
+  .post-view-body p:has(> br:only-child) {
+    margin: 0.25rem 0;
+  }
+
   .post-view-body ul,
   .post-view-body ol {
     margin-bottom: 1rem;

@@ -174,6 +174,12 @@
     .post-content :global(p) {
       margin: 1rem 0;
     }
+
+    /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
+    .post-content :global(p:empty),
+    .post-content :global(p:has(> br:only-child)) {
+      margin: 0.25rem 0;
+    }
     
     .post-content :global(ul),
     .post-content :global(ol) {
