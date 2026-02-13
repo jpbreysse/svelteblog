@@ -346,6 +346,21 @@
   // Assignment functionality
   let showAssignDropdown = false;
 
+  // Copy link functionality
+  let linkCopied = false;
+
+  async function copyPostLink(postId) {
+    const url = `${window.location.origin}/explorer?post=${postId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      linkCopied = true;
+      setTimeout(() => linkCopied = false, 2000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+      alert('Failed to copy link');
+    }
+  }
+
   async function assignPost(postId, userId) {
     try {
       const response = await fetch(`/api/posts/${postId}/assign`, {
@@ -642,6 +657,9 @@
 
           <!-- Action buttons -->
           <div class="post-actions">
+            <button class="btn-action link-btn" on:click={() => copyPostLink(selectedPost.id)}>
+              {linkCopied ? '✅ Copied!' : '🔗 Copy link'}
+            </button>
             {#if canEditPost(selectedPost)}
               <button class="btn-action edit-btn" on:click={() => editPost(selectedPost)}>
                 ✏️ Edit
@@ -1277,6 +1295,17 @@
     cursor: pointer;
     font-size: 0.875rem;
     transition: all 0.2s;
+  }
+
+  .link-btn {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #166534;
+  }
+
+  .link-btn:hover {
+    background: #dcfce7;
+    border-color: #22c55e;
   }
 
   .edit-btn:hover {

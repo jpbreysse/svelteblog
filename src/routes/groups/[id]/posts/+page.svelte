@@ -370,6 +370,21 @@
     }
   }
 
+  // Copy link functionality
+  let linkCopied = false;
+
+  async function copyPostLink(postId) {
+    const url = `${window.location.origin}/explorer?post=${postId}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      linkCopied = true;
+      setTimeout(() => linkCopied = false, 2000);
+    } catch (err) {
+      console.error('Failed to copy link:', err);
+      alert('Failed to copy link');
+    }
+  }
+
   // Assignment functionality
   async function assignPost(postId, userId) {
     try {
@@ -604,6 +619,9 @@
           </div>
 
           <div class="post-view-actions">
+            <button class="btn-action link" on:click={() => copyPostLink(selectedPost.id)}>
+              {linkCopied ? '✅ Copied!' : '🔗 Copy link'}
+            </button>
             {#if selectedPost.can_write}
               <button class="btn-action edit" on:click={() => editPost(selectedPost)}>
                 Edit
@@ -1432,6 +1450,17 @@
 
   .btn-action:hover {
     background: #f3f4f6;
+  }
+
+  .btn-action.link {
+    background: #f0fdf4;
+    border-color: #86efac;
+    color: #166534;
+  }
+
+  .btn-action.link:hover {
+    background: #dcfce7;
+    border-color: #22c55e;
   }
 
   .btn-action.edit {
