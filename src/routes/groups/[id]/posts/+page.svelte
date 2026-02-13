@@ -1174,6 +1174,7 @@
   .content-area {
     background: white;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -1470,7 +1471,9 @@
 
   /* Post View */
   .post-view {
-    padding: 2rem;
+    padding: 2rem 3rem;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .post-view-header {
@@ -1664,6 +1667,9 @@
     font-size: 1rem;
     line-height: 1.7;
     color: #374151;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
   }
 
   .post-view-body h1,
@@ -1702,6 +1708,12 @@
     padding: 0.125rem 0.375rem;
     border-radius: 4px;
     font-size: 0.875em;
+    word-break: break-all;
+  }
+
+  .post-view-body img {
+    max-width: 100%;
+    height: auto;
   }
 
   .post-view-body pre {
@@ -1711,6 +1723,7 @@
     border-radius: 8px;
     overflow-x: auto;
     margin-bottom: 1rem;
+    max-width: 100%;
   }
 
   .post-view-body pre code {

@@ -1113,6 +1113,7 @@
   .content-area {
     background: white;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     flex: 1;
@@ -1213,8 +1214,9 @@
 
   /* Post Content */
   .post-content {
-    padding: 2rem;
+    padding: 2rem 3rem;
     width: 100%;
+    box-sizing: border-box;
   }
 
   .post-header {
@@ -1405,6 +1407,9 @@
     line-height: 1.8;
     color: #374151;
     margin-bottom: 3rem;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    max-width: 100%;
   }
 
   .post-body :global(p) {
@@ -1422,6 +1427,20 @@
 
   .post-body :global(br + br) {
     display: none;
+  }
+
+  .post-body :global(img) {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .post-body :global(pre) {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .post-body :global(code) {
+    word-break: break-all;
   }
 
   /* Child Pages */
@@ -1826,7 +1845,8 @@
     }
 
     .post-content {
-      padding: 1rem;
+      padding: 1rem 1.5rem;
+      max-width: 100%;
     }
 
     .post-title {
