@@ -1675,13 +1675,20 @@
   }
 
   .post-view-body p {
-    margin-bottom: 1rem;
+    margin: 0 0 1rem 0;
   }
 
   /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
-  .post-view-body p:empty,
-  .post-view-body p:has(> br:only-child) {
-    margin: 0.25rem 0;
+  .post-view-body p:empty {
+    display: none;
+  }
+
+  .post-view-body p > br:only-child {
+    display: none;
+  }
+
+  .post-view-body br + br {
+    display: none;
   }
 
   .post-view-body ul,

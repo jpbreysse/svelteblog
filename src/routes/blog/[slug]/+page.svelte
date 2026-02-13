@@ -172,13 +172,20 @@
     }
     
     .post-content :global(p) {
-      margin: 1rem 0;
+      margin: 0 0 1rem 0;
     }
 
     /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
-    .post-content :global(p:empty),
-    .post-content :global(p:has(> br:only-child)) {
-      margin: 0.25rem 0;
+    .post-content :global(p:empty) {
+      display: none;
+    }
+
+    .post-content :global(p > br:only-child) {
+      display: none;
+    }
+
+    .post-content :global(br + br) {
+      display: none;
     }
     
     .post-content :global(ul),
