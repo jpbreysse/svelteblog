@@ -385,6 +385,73 @@
     }
   }
 
+  // PDF export functionality
+  let exportingPdf = false;
+
+  async function exportToPdf(post) {
+    if (exportingPdf) return;
+    exportingPdf = true;
+
+    try {
+      // Dynamically load html2pdf.js from CDN
+      if (!window.html2pdf) {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js';
+        await new Promise((resolve, reject) => {
+          script.onload = resolve;
+          script.onerror = reject;
+          document.head.appendChild(script);
+        });
+      }
+
+      // Create a container with the post content for PDF
+      const container = document.createElement('div');
+      container.innerHTML = `
+        <div style="font-family: 'Helvetica', 'Arial', sans-serif; padding: 20px; max-width: 800px;">
+          <h1 style="font-size: 24px; color: #1f2937; margin-bottom: 10px;">
+            ${post.category_post_number && post.category
+              ? `<span style="color: #2563eb; font-size: 0.7em; margin-right: 8px;">${post.category.substring(0, 3).toUpperCase()} #${post.category_post_number}:</span>`
+              : ''}
+            ${post.title}
+          </h1>
+          <div style="font-size: 12px; color: #6b7280; margin-bottom: 20px;">
+            <span>Author: ${post.author}</span> |
+            <span>Date: ${formatDate(post.created_at)}</span> |
+            <span>Category: ${post.category}</span>
+          </div>
+          ${post.tags && post.tags.length > 0
+            ? `<div style="margin-bottom: 20px;">${post.tags.map(tag => `<span style="background: #f3f4f6; padding: 4px 10px; border-radius: 12px; font-size: 11px; margin-right: 5px;">${tag}</span>`).join('')}</div>`
+            : ''}
+          <hr style="border: none; border-top: 1px solid #e5e7eb; margin: 20px 0;">
+          <div style="font-size: 14px; line-height: 1.8; color: #374151;">
+            ${post.content}
+          </div>
+        </div>
+      `;
+
+      // Generate filename from title
+      const filename = `${post.title.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 50)}.pdf`;
+
+      // PDF options
+      const options = {
+        margin: [10, 10, 10, 10],
+        filename: filename,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+      };
+
+      // Generate and download PDF
+      await window.html2pdf().set(options).from(container).save();
+
+    } catch (err) {
+      console.error('Failed to export PDF:', err);
+      alert('Failed to export PDF. Please try again.');
+    } finally {
+      exportingPdf = false;
+    }
+  }
+
   // Assignment functionality
   async function assignPost(postId, userId) {
     try {
@@ -621,6 +688,9 @@
           <div class="post-view-actions">
             <button class="btn-action link" on:click={() => copyPostLink(selectedPost.id)}>
               {linkCopied ? '✅ Copied!' : '🔗 Copy link'}
+            </button>
+            <button class="btn-action pdf" on:click={() => exportToPdf(selectedPost)} disabled={exportingPdf}>
+              {exportingPdf ? '⏳ Exporting...' : '📄 Export PDF'}
             </button>
             {#if selectedPost.can_write}
               <button class="btn-action edit" on:click={() => editPost(selectedPost)}>
@@ -1461,6 +1531,22 @@
   .btn-action.link:hover {
     background: #dcfce7;
     border-color: #22c55e;
+  }
+
+  .btn-action.pdf {
+    background: #fef3c7;
+    border-color: #fcd34d;
+    color: #92400e;
+  }
+
+  .btn-action.pdf:hover:not(:disabled) {
+    background: #fde68a;
+    border-color: #f59e0b;
+  }
+
+  .btn-action.pdf:disabled {
+    opacity: 0.7;
+    cursor: wait;
   }
 
   .btn-action.edit {
