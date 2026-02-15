@@ -1549,6 +1549,28 @@
     height: auto;
   }
 
+  .post-body :global(table) {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+  }
+
+  .post-body :global(th),
+  .post-body :global(td) {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+
+  .post-body :global(th) {
+    background: #f3f4f6;
+    font-weight: 600;
+  }
+
+  .post-body :global(tr:hover) {
+    background: #f9fafb;
+  }
+
   .post-body :global(pre) {
     max-width: 100%;
     overflow-x: auto;

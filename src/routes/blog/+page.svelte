@@ -36,12 +36,16 @@
 
     let showEditor = false;
     let editingPost = null;
-    let quill = null;
+    let editor = null; // TipTap editor instance
     let editorContainer;
     let loading = false;
     let closingEditor = false; // Flag to prevent reactive reopening after save/cancel
     let userGroups = []; // User's groups for permissions
     let hasOpenedNewPost = false; // Track if we've already opened the new post editor for this URL
+    let tiptapLoaded = false; // Track if TipTap modules are loaded
+    let showTableControls = false; // Show table editing controls
+    let showLinkInput = false; // Show link URL input
+    let linkUrl = ''; // Link URL value
 
     // Watch for ?new=true in URL and open editor (works for client-side navigation)
     $: if (browser && $page.url.searchParams.get('new') === 'true' && data.user && !showEditor && !closingEditor && !hasOpenedNewPost) {
@@ -175,8 +179,8 @@
       }
       
       // Content validation
-      if (editingPost.content && quill) {
-        const textContent = quill.getText().trim();
+      if (editingPost.content && editor) {
+        const textContent = editor.getText().trim();
         if (textContent.length > VALIDATION_LIMITS.content.max) {
           validationErrors.push(`Content must be ${VALIDATION_LIMITS.content.max} characters or less`);
         } else if (textContent.length > VALIDATION_LIMITS.content.warning) {
@@ -204,8 +208,8 @@
     
     // Get content length for display
     function getContentLength() {
-      if (!quill) return 0;
-      return quill.getText().trim().length;
+      if (!editor) return 0;
+      return editor.getText().trim().length;
     }
     
     async function savePost() {
@@ -221,9 +225,9 @@
         return;
       }
       
-      // Get latest content from Quill
-      if (quill) {
-        editingPost.content = quill.root.innerHTML;
+      // Get latest content from TipTap
+      if (editor) {
+        editingPost.content = editor.getHTML();
       }
       
       if (!editingPost.content?.trim()) {
@@ -280,13 +284,13 @@
           console.log('✅ Post saved successfully:', result);
           // Set flag to prevent reactive statement from reopening editor
           closingEditor = true;
-          // Properly clean up editor
-          if (editorContainer) {
-            editorContainer.innerHTML = '';
+          // Properly clean up TipTap editor
+          if (editor) {
+            editor.destroy();
+            editor = null;
           }
           showEditor = false;
           editingPost = null;
-          quill = null;
           // Check if there's a return URL parameter to go back to where user came from
           const urlParams = new URLSearchParams(window.location.search);
           const returnUrl = urlParams.get('return');
@@ -335,47 +339,178 @@
       }
     }
     
-    // Initialize Quill when editor is shown
+    // Initialize TipTap when editor is shown
     async function initEditor() {
       if (!editorContainer) return;
-      
+
       try {
-        const QuillModule = await import('quill');
-        const Quill = QuillModule.default;
-        
-        quill = new Quill(editorContainer, {
-          theme: 'snow',
-          placeholder: 'Share your thoughts...',
-          modules: {
-            toolbar: [
-              [{ 'header': [1, 2, 3, false] }],
-              ['bold', 'italic', 'underline', 'strike'],
-              [{ 'color': [] }, { 'background': [] }],
-              [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-              [{ 'align': [] }],
-              ['blockquote', 'code-block'],
-              ['link', 'image'],
-              ['clean']
-            ]
-          }
-        });
-        
-        // Set initial content if editing
-        if (editingPost.content) {
-          quill.root.innerHTML = editingPost.content;
+        // Dynamically load TipTap from CDN
+        if (!tiptapLoaded) {
+          const modules = await Promise.all([
+            import('https://esm.sh/@tiptap/core@2.1.13'),
+            import('https://esm.sh/@tiptap/starter-kit@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-table@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-table-row@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-table-cell@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-table-header@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-link@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-image@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-underline@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-text-align@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-highlight@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-color@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-text-style@2.1.13'),
+            import('https://esm.sh/@tiptap/extension-placeholder@2.1.13'),
+          ]);
+
+          window.TipTapModules = {
+            Editor: modules[0].Editor,
+            StarterKit: modules[1].default,
+            Table: modules[2].default,
+            TableRow: modules[3].default,
+            TableCell: modules[4].default,
+            TableHeader: modules[5].default,
+            Link: modules[6].default,
+            Image: modules[7].default,
+            Underline: modules[8].default,
+            TextAlign: modules[9].default,
+            Highlight: modules[10].default,
+            Color: modules[11].default,
+            TextStyle: modules[12].default,
+            Placeholder: modules[13].default,
+          };
+          tiptapLoaded = true;
         }
-        
-        // Update content as user types and validate
-        quill.on('text-change', () => {
-          editingPost.content = quill.root.innerHTML;
-          // Debounce validation to avoid excessive checks
-          clearTimeout(window.validationTimeout);
-          window.validationTimeout = setTimeout(validatePost, 300);
+
+        const { Editor, StarterKit, Table, TableRow, TableCell, TableHeader,
+                Link, Image, Underline, TextAlign, Highlight, Color, TextStyle, Placeholder } = window.TipTapModules;
+
+        // Debug: Log content being loaded
+        console.log('🔍 TipTap loading content:');
+        console.log('   - Content length:', editingPost.content?.length || 0);
+        console.log('   - Has img tag:', editingPost.content?.includes('<img') || false);
+        console.log('   - First 500 chars:', editingPost.content?.substring(0, 500));
+
+        editor = new Editor({
+          element: editorContainer,
+          extensions: [
+            StarterKit,
+            Underline,
+            TextStyle,
+            Color,
+            Highlight.configure({ multicolor: true }),
+            TextAlign.configure({ types: ['heading', 'paragraph'] }),
+            Link.configure({ openOnClick: false }),
+            Image.configure({
+              allowBase64: true,
+              inline: false,
+            }),
+            Table.configure({ resizable: true }),
+            TableRow,
+            TableCell,
+            TableHeader,
+            Placeholder.configure({ placeholder: 'Share your thoughts...' }),
+          ],
+          content: editingPost.content || '',
+          onUpdate: ({ editor: e }) => {
+            editingPost.content = e.getHTML();
+            showTableControls = e.isActive('table');
+            // Debounce validation
+            clearTimeout(window.validationTimeout);
+            window.validationTimeout = setTimeout(validatePost, 300);
+          },
+          onSelectionUpdate: ({ editor: e }) => {
+            showTableControls = e.isActive('table');
+          },
         });
-        
+
+        // Setup paste handler for images
+        editorContainer.addEventListener('paste', handleImagePaste);
+        editorContainer.addEventListener('drop', handleImageDrop);
+        editorContainer.addEventListener('dragover', (e) => e.preventDefault());
+
       } catch (error) {
         console.error('Failed to initialize editor:', error);
       }
+    }
+
+    // Handle image paste
+    function handleImagePaste(e) {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) convertAndInsertImage(file);
+          break;
+        }
+      }
+    }
+
+    // Handle image drop
+    function handleImageDrop(e) {
+      e.preventDefault();
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        for (const file of files) {
+          if (file.type.startsWith('image/')) {
+            convertAndInsertImage(file);
+            break;
+          }
+        }
+      }
+    }
+
+    // Convert image to Base64 and insert
+    function convertAndInsertImage(file) {
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image is too large. Maximum size is 5MB.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        editor?.chain().focus().setImage({ src: e.target.result }).run();
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Trigger file upload
+    function triggerImageUpload() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = 'image/*';
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) convertAndInsertImage(file);
+      };
+      input.click();
+    }
+
+    // Insert image from URL
+    function insertImageFromUrl() {
+      const url = prompt('Enter image URL:');
+      if (url) {
+        editor?.chain().focus().setImage({ src: url }).run();
+      }
+    }
+
+    // Set link
+    function setLink() {
+      if (linkUrl) {
+        editor?.chain().focus().setLink({ href: linkUrl }).run();
+      }
+      showLinkInput = false;
+      linkUrl = '';
+    }
+
+    // Unset link
+    function unsetLink() {
+      editor?.chain().focus().unsetLink().run();
+      showLinkInput = false;
+      linkUrl = '';
     }
     
     function createNewPost() {
@@ -419,9 +554,27 @@
       // Load post permissions
       let readGroupIds = [];
       let writeGroupIds = [];
+      let fullPost = post;
 
       if (post.id) {
         try {
+          // Fetch full post content from API (list data may not include large images)
+          console.log('📡 Fetching full post content for:', post.id);
+          const postResponse = await fetch(`/api/posts/${post.id}`);
+          const postData = await postResponse.json();
+
+          if (postData.success && postData.post) {
+            fullPost = postData.post;
+            console.log('✅ Loaded full post content:');
+            console.log('   - Length:', fullPost.content?.length || 0);
+            console.log('   - Has img tag:', fullPost.content?.includes('<img') || false);
+            console.log('   - Has base64:', fullPost.content?.includes('data:image') || false);
+          } else {
+            console.warn('⚠️ Could not fetch full post, using list data');
+            console.log('   - postData:', postData);
+          }
+
+          // Load permissions
           console.log('📡 Loading permissions for post:', post.id);
           const permResponse = await fetch(`/api/posts/${post.id}/permissions`);
           const permData = await permResponse.json();
@@ -433,14 +586,14 @@
             console.log('✅ Loaded permissions - read:', readGroupIds, 'write:', writeGroupIds);
           }
         } catch (error) {
-          console.error('❌ Failed to load permissions:', error);
+          console.error('❌ Failed to load post data:', error);
         }
       }
 
       editingPost = {
-        ...post,
-        tags: post.tags || [],
-        visibility: post.visibility || 'public',
+        ...fullPost,
+        tags: fullPost.tags || [],
+        visibility: fullPost.visibility || 'public',
         readGroupIds,
         writeGroupIds
       };
@@ -452,18 +605,16 @@
       // Set flag to prevent reactive statement from reopening editor
       closingEditor = true;
 
-      // Properly destroy Quill editor to prevent conflicts on next initialization
-      if (quill) {
-        quill = null;
-      }
-
-      // Clear the editor container's content
-      if (editorContainer) {
-        editorContainer.innerHTML = '';
+      // Properly destroy TipTap editor
+      if (editor) {
+        editor.destroy();
+        editor = null;
       }
 
       showEditor = false;
       editingPost = null;
+      showTableControls = false;
+      showLinkInput = false;
 
       // Check if there's a return URL parameter to go back to where user came from
       const urlParams = new URLSearchParams(window.location.search);
@@ -536,7 +687,6 @@
   <svelte:head>
     <title>Blog - {PUBLIC_APP_NAME}</title>
     <meta name="description" content={PUBLIC_APP_DESCRIPTION}>
-    <link href="https://cdn.quilljs.com/1.3.6/quill.snow.css" rel="stylesheet">
   </svelte:head>
   
   <div class="blog-container">
@@ -625,7 +775,216 @@
                   📝 {getContentLength().toLocaleString()}/{VALIDATION_LIMITS.content.max.toLocaleString()} characters
                 </span>
               </div>
-              <div bind:this={editorContainer} id="blog-editor" class="quill-editor-container"></div>
+
+              <!-- TipTap Toolbar -->
+              {#if editor}
+                <div class="tiptap-toolbar">
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('heading', { level: 1 })}
+                      on:click={() => editor?.chain().focus().toggleHeading({ level: 1 }).run()}
+                      title="Heading 1"
+                    >H1</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('heading', { level: 2 })}
+                      on:click={() => editor?.chain().focus().toggleHeading({ level: 2 }).run()}
+                      title="Heading 2"
+                    >H2</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('heading', { level: 3 })}
+                      on:click={() => editor?.chain().focus().toggleHeading({ level: 3 }).run()}
+                      title="Heading 3"
+                    >H3</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().setParagraph().run()}
+                      title="Paragraph"
+                    >P</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('bold')}
+                      on:click={() => editor?.chain().focus().toggleBold().run()}
+                      title="Bold"
+                    ><b>B</b></button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('italic')}
+                      on:click={() => editor?.chain().focus().toggleItalic().run()}
+                      title="Italic"
+                    ><i>I</i></button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('underline')}
+                      on:click={() => editor?.chain().focus().toggleUnderline().run()}
+                      title="Underline"
+                    ><u>U</u></button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('strike')}
+                      on:click={() => editor?.chain().focus().toggleStrike().run()}
+                      title="Strikethrough"
+                    ><s>S</s></button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('code')}
+                      on:click={() => editor?.chain().focus().toggleCode().run()}
+                      title="Inline Code"
+                    >&lt;&gt;</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('bulletList')}
+                      on:click={() => editor?.chain().focus().toggleBulletList().run()}
+                      title="Bullet List"
+                    >• List</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('orderedList')}
+                      on:click={() => editor?.chain().focus().toggleOrderedList().run()}
+                      title="Numbered List"
+                    >1. List</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('blockquote')}
+                      on:click={() => editor?.chain().focus().toggleBlockquote().run()}
+                      title="Quote"
+                    >"</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().setHorizontalRule().run()}
+                      title="Horizontal Rule"
+                    >—</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive({ textAlign: 'left' })}
+                      on:click={() => editor?.chain().focus().setTextAlign('left').run()}
+                      title="Align Left"
+                    >⫷</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive({ textAlign: 'center' })}
+                      on:click={() => editor?.chain().focus().setTextAlign('center').run()}
+                      title="Align Center"
+                    >☰</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive({ textAlign: 'right' })}
+                      on:click={() => editor?.chain().focus().setTextAlign('right').run()}
+                      title="Align Right"
+                    >⫸</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      class:is-active={editor?.isActive('link')}
+                      on:click={() => showLinkInput = !showLinkInput}
+                      title="Link"
+                    >🔗</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={triggerImageUpload}
+                      title="Upload Image"
+                    >🖼️</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={insertImageFromUrl}
+                      title="Image from URL"
+                    >🌐</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+                      title="Insert Table"
+                    >▦</button>
+                  </div>
+
+                  <div class="toolbar-group">
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().undo().run()}
+                      disabled={!editor?.can().undo()}
+                      title="Undo"
+                    >↩</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().redo().run()}
+                      disabled={!editor?.can().redo()}
+                      title="Redo"
+                    >↪</button>
+                  </div>
+                </div>
+
+                <!-- Link Input -->
+                {#if showLinkInput}
+                  <div class="link-input-bar">
+                    <input
+                      type="url"
+                      bind:value={linkUrl}
+                      placeholder="Enter URL..."
+                      class="link-input"
+                      on:keydown={(e) => e.key === 'Enter' && setLink()}
+                    />
+                    <button type="button" class="link-btn" on:click={setLink}>Set Link</button>
+                    {#if editor?.isActive('link')}
+                      <button type="button" class="link-btn danger" on:click={unsetLink}>Remove</button>
+                    {/if}
+                    <button type="button" class="link-btn secondary" on:click={() => { showLinkInput = false; linkUrl = ''; }}>Cancel</button>
+                  </div>
+                {/if}
+
+                <!-- Table Controls -->
+                {#if showTableControls}
+                  <div class="table-controls-bar">
+                    <span class="table-label">Table:</span>
+                    <button type="button" class="table-btn" on:click={() => editor?.chain().focus().addRowBefore().run()}>+ Row Above</button>
+                    <button type="button" class="table-btn" on:click={() => editor?.chain().focus().addRowAfter().run()}>+ Row Below</button>
+                    <button type="button" class="table-btn" on:click={() => editor?.chain().focus().addColumnBefore().run()}>+ Col Left</button>
+                    <button type="button" class="table-btn" on:click={() => editor?.chain().focus().addColumnAfter().run()}>+ Col Right</button>
+                    <button type="button" class="table-btn danger" on:click={() => editor?.chain().focus().deleteRow().run()}>Delete Row</button>
+                    <button type="button" class="table-btn danger" on:click={() => editor?.chain().focus().deleteColumn().run()}>Delete Col</button>
+                    <button type="button" class="table-btn danger" on:click={() => editor?.chain().focus().deleteTable().run()}>Delete Table</button>
+                    <button type="button" class="table-btn" on:click={() => editor?.chain().focus().toggleHeaderRow().run()}>Toggle Header</button>
+                  </div>
+                {/if}
+              {/if}
+
+              <div bind:this={editorContainer} id="blog-editor" class="tiptap-editor-container" class:has-toolbar={editor}></div>
             </div>
 
             <!-- Validation Messages -->
@@ -1305,58 +1664,316 @@
       margin-bottom: 2rem;
     }
     
-    .quill-editor-container {
+    /* TipTap Toolbar Styles */
+    .tiptap-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 12px;
+      background: #f9fafb;
+      border: 1px solid #d1d5db;
+      border-bottom: none;
+      border-radius: 8px 8px 0 0;
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 2px;
+      padding-right: 8px;
+      border-right: 1px solid #e5e7eb;
+      margin-right: 8px;
+    }
+
+    .toolbar-group:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+
+    .toolbar-btn {
+      padding: 6px 10px;
+      border: 1px solid #d1d5db;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+      min-width: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .toolbar-btn:hover:not(:disabled) {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+
+    .toolbar-btn.is-active {
+      background: #2563eb;
+      color: white;
+      border-color: #2563eb;
+    }
+
+    .toolbar-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    /* Link Input Bar */
+    .link-input-bar {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #eef2ff;
+      border: 1px solid #d1d5db;
+      border-top: 1px solid #c7d2fe;
+      align-items: center;
+    }
+
+    .link-input {
+      flex: 1;
+      padding: 6px 10px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .link-btn {
+      padding: 6px 12px;
+      border: 1px solid #2563eb;
+      background: #2563eb;
+      color: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+    }
+
+    .link-btn:hover {
+      background: #1d4ed8;
+    }
+
+    .link-btn.secondary {
+      background: #6b7280;
+      border-color: #6b7280;
+    }
+
+    .link-btn.secondary:hover {
+      background: #5b6470;
+    }
+
+    .link-btn.danger {
+      background: #dc2626;
+      border-color: #dc2626;
+    }
+
+    .link-btn.danger:hover {
+      background: #b91c1c;
+    }
+
+    /* Table Controls Bar */
+    .table-controls-bar {
+      display: flex;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #fef3c7;
+      border: 1px solid #d1d5db;
+      border-top: 1px solid #fcd34d;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .table-label {
+      font-weight: 600;
+      color: #92400e;
+      font-size: 13px;
+    }
+
+    .table-btn {
+      padding: 4px 10px;
+      border: 1px solid #f59e0b;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: all 0.2s;
+    }
+
+    .table-btn:hover {
+      background: #fde68a;
+    }
+
+    .table-btn.danger {
+      border-color: #ef4444;
+      color: #dc2626;
+    }
+
+    .table-btn.danger:hover {
+      background: #fee2e2;
+    }
+
+    /* TipTap Editor Container */
+    .tiptap-editor-container {
       min-height: 300px;
       border: 1px solid #d1d5db;
       border-radius: 8px;
+      padding: 1rem;
+      background: white;
+      outline: none;
     }
-    
-    /* Quill list styles - Quill uses data-list attributes */
-    .quill-editor-container :global(.ql-editor ol),
-    .quill-editor-container :global(.ql-editor ul) {
+
+    /* When toolbar is present, adjust border-radius */
+    .tiptap-editor-container.has-toolbar {
+      border-radius: 0 0 8px 8px;
+      border-top: none;
+    }
+
+    .tiptap-editor-container:focus-within {
+      border-color: #2563eb;
+    }
+
+    /* TipTap Editor Content Styles */
+    .tiptap-editor-container :global(.ProseMirror) {
+      outline: none;
+      min-height: 280px;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror p) {
+      margin: 0.5em 0;
+      line-height: 1.6;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror h1) {
+      font-size: 2em;
+      font-weight: 700;
+      margin: 0.5em 0;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror h2) {
+      font-size: 1.5em;
+      font-weight: 600;
+      margin: 0.5em 0;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror h3) {
+      font-size: 1.25em;
+      font-weight: 600;
+      margin: 0.5em 0;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror ul),
+    .tiptap-editor-container :global(.ProseMirror ol) {
       padding-left: 1.5em;
-      list-style-type: none;
+      margin: 0.5em 0;
     }
-    
-    .quill-editor-container :global(.ql-editor li) {
-      list-style-type: none;
+
+    .tiptap-editor-container :global(.ProseMirror ul) {
+      list-style-type: disc;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror ol) {
+      list-style-type: decimal;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror li) {
+      margin: 0.25em 0;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror blockquote) {
+      border-left: 4px solid #2563eb;
+      padding-left: 1em;
+      margin: 1em 0;
+      color: #6b7280;
+      font-style: italic;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror code) {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.9em;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror pre) {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 1em;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-family: monospace;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror pre code) {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror img) {
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror a) {
+      color: #2563eb;
+      text-decoration: underline;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror hr) {
+      border: none;
+      border-top: 2px solid #e5e7eb;
+      margin: 1.5em 0;
+    }
+
+    /* Table Styles */
+    .tiptap-editor-container :global(.ProseMirror table) {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1rem 0;
+      table-layout: fixed;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror th),
+    .tiptap-editor-container :global(.ProseMirror td) {
+      border: 2px solid #d1d5db;
+      padding: 8px 12px;
+      text-align: left;
       position: relative;
-      padding-left: 1.5em;
+      min-width: 100px;
     }
-    
-    /* Bullet lists - Quill uses data-list="bullet" */
-    .quill-editor-container :global(.ql-editor li[data-list="bullet"]::before) {
-      content: '\2022';
+
+    .tiptap-editor-container :global(.ProseMirror th) {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror tr:hover td) {
+      background: #f9fafb;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror .selectedCell) {
+      background: #dbeafe !important;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror .column-resize-handle) {
       position: absolute;
-      left: 0;
-      color: inherit;
-      font-weight: bold;
+      right: -2px;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: #2563eb;
+      cursor: col-resize;
     }
-    
-    /* Numbered lists - Quill uses data-list="ordered" with counters */
-    .quill-editor-container :global(.ql-editor ol) {
-      counter-reset: list-0 list-1 list-2 list-3 list-4 list-5 list-6 list-7 list-8 list-9;
-    }
-    
-    .quill-editor-container :global(.ql-editor li[data-list="ordered"]) {
-      counter-increment: list-0;
-    }
-    
-    .quill-editor-container :global(.ql-editor li[data-list="ordered"]::before) {
-      content: counter(list-0, decimal) ".";
-      position: absolute;
-      left: 0;
-      color: inherit;
-      font-weight: bold;
-    }
-    
-    /* Handle nested lists */
-    .quill-editor-container :global(.ql-editor li[data-list="ordered"].ql-indent-1) {
-      counter-increment: list-1;
-    }
-    
-    .quill-editor-container :global(.ql-editor li[data-list="ordered"].ql-indent-1::before) {
-      content: counter(list-1, decimal) ".";
+
+    /* Placeholder */
+    .tiptap-editor-container :global(.ProseMirror p.is-editor-empty:first-child::before) {
+      content: attr(data-placeholder);
+      float: left;
+      color: #9ca3af;
+      pointer-events: none;
+      height: 0;
     }
     
     .editor-footer {

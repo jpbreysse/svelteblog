@@ -59,7 +59,7 @@ export async function GET({ url, locals }) {
 // Validation constants (server-side safety limits)
 const VALIDATION_LIMITS = {
   title: { max: 500 },        // Generous server limit
-  content: { max: 1000000 },  // 1MB limit for image support
+  content: { max: 10000000 }, // 10MB limit for Base64 image support
   category: { max: 50 },
   tags: { max: 15, tagLength: 50 } // Generous server limits
 };

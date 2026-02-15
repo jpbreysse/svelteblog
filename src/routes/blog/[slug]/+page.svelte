@@ -268,7 +268,29 @@
       border-radius: 8px;
       margin: 1.5rem 0;
     }
-    
+
+    .post-content :global(table) {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1.5rem 0;
+    }
+
+    .post-content :global(th),
+    .post-content :global(td) {
+      border: 1px solid #d1d5db;
+      padding: 0.75rem 1rem;
+      text-align: left;
+    }
+
+    .post-content :global(th) {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+
+    .post-content :global(tr:hover) {
+      background: #f9fafb;
+    }
+
     .post-content :global(a) {
       color: #2563eb;
       text-decoration: underline;

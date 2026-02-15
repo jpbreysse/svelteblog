@@ -1831,6 +1831,28 @@
     height: auto;
   }
 
+  .post-view-body table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 1rem 0;
+  }
+
+  .post-view-body th,
+  .post-view-body td {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+  }
+
+  .post-view-body th {
+    background: #f3f4f6;
+    font-weight: 600;
+  }
+
+  .post-view-body tr:hover {
+    background: #f9fafb;
+  }
+
   .post-view-body pre {
     background: #1f2937;
     color: #f9fafb;
