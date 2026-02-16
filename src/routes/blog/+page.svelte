@@ -622,6 +622,103 @@
       }
     }
 
+    // Import PDF - extract text and insert into editor
+    let pdfJsLoaded = false;
+    let importingPdf = false;
+
+    async function loadPdfJs() {
+      if (pdfJsLoaded) return;
+
+      // Load pdf.js from CDN
+      const script = document.createElement('script');
+      script.src = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      document.head.appendChild(script);
+
+      await new Promise((resolve, reject) => {
+        script.onload = resolve;
+        script.onerror = reject;
+      });
+
+      // Set worker
+      window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      pdfJsLoaded = true;
+    }
+
+    async function importPdf() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,application/pdf';
+
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        if (file.size > 20 * 1024 * 1024) {
+          alert('PDF is too large. Maximum size is 20MB.');
+          return;
+        }
+
+        importingPdf = true;
+
+        try {
+          // Load pdf.js if not already loaded
+          await loadPdfJs();
+
+          // Read file as ArrayBuffer
+          const arrayBuffer = await file.arrayBuffer();
+
+          // Load PDF document
+          const pdf = await window.pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+          let fullText = '';
+          const totalPages = pdf.numPages;
+
+          // Extract text from each page
+          for (let pageNum = 1; pageNum <= totalPages; pageNum++) {
+            const page = await pdf.getPage(pageNum);
+            const textContent = await page.getTextContent();
+
+            // Combine text items
+            const pageText = textContent.items
+              .map(item => item.str)
+              .join(' ')
+              .replace(/\s+/g, ' ')
+              .trim();
+
+            if (pageText) {
+              if (totalPages > 1) {
+                fullText += `<h3>Page ${pageNum}</h3>\n`;
+              }
+              // Split into paragraphs (double newlines or long gaps)
+              const paragraphs = pageText.split(/\.\s+/).filter(p => p.trim());
+              paragraphs.forEach(p => {
+                fullText += `<p>${p.trim()}.</p>\n`;
+              });
+              fullText += '\n';
+            }
+          }
+
+          if (fullText.trim()) {
+            // Insert at cursor position
+            editor?.chain().focus().insertContent(fullText).run();
+            console.log(`✅ Imported ${totalPages} page(s) from PDF`);
+          } else {
+            alert('Could not extract text from this PDF. It may be image-based or protected.');
+          }
+
+        } catch (error) {
+          console.error('Failed to import PDF:', error);
+          alert('Failed to import PDF: ' + error.message);
+        } finally {
+          importingPdf = false;
+        }
+      };
+
+      input.click();
+    }
+
     // Set link
     function setLink() {
       if (linkUrl) {
@@ -1046,6 +1143,13 @@
                       on:click={insertImageFromUrl}
                       title="Image from URL"
                     >🌐</button>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={importPdf}
+                      disabled={importingPdf}
+                      title="Import PDF (extract text)"
+                    >{importingPdf ? '⏳' : '📄'}</button>
                   </div>
 
                   <div class="toolbar-group">
