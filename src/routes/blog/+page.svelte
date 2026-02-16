@@ -413,6 +413,9 @@
 
           addNodeView() {
             return ({ node, getPos, editor: nodeEditor }) => {
+              // Store current attrs (will be updated on each update call)
+              let currentAttrs = { ...node.attrs };
+
               const container = document.createElement('div');
               container.classList.add('resizable-image-container');
 
@@ -460,12 +463,22 @@
                 document.removeEventListener('mousemove', onMouseMove);
                 document.removeEventListener('mouseup', onMouseUp);
 
-                // Update node attributes
+                // Update node attributes using transaction
                 const newWidth = img.offsetWidth;
                 if (typeof getPos === 'function') {
-                  nodeEditor.chain().focus().updateAttributes('resizableImage', {
-                    width: newWidth
-                  }).run();
+                  const pos = getPos();
+                  try {
+                    const { tr } = nodeEditor.state;
+                    tr.setNodeMarkup(pos, undefined, {
+                      ...currentAttrs,
+                      width: newWidth,
+                    });
+                    nodeEditor.view.dispatch(tr);
+                    // Update local attrs reference
+                    currentAttrs.width = newWidth;
+                  } catch (err) {
+                    console.error('Failed to update image size:', err);
+                  }
                 }
               };
 
@@ -480,6 +493,8 @@
                 dom: container,
                 update: (updatedNode) => {
                   if (updatedNode.type.name !== 'resizableImage') return false;
+                  // Update our local reference
+                  currentAttrs = { ...updatedNode.attrs };
                   img.src = updatedNode.attrs.src;
                   img.alt = updatedNode.attrs.alt || '';
                   if (updatedNode.attrs.width) {
