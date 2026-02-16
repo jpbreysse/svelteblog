@@ -385,11 +385,121 @@
         const { Editor, StarterKit, Table, TableRow, TableCell, TableHeader,
                 Link, Image, Underline, TextAlign, Highlight, Color, TextStyle, Placeholder } = window.TipTapModules;
 
+        // Create ResizableImage extension
+        const ResizableImage = Image.extend({
+          name: 'resizableImage',
+
+          addAttributes() {
+            return {
+              ...this.parent?.(),
+              width: {
+                default: null,
+                parseHTML: element => element.getAttribute('width') || element.style.width?.replace('px', '') || null,
+                renderHTML: attributes => {
+                  if (!attributes.width) return {};
+                  return { width: attributes.width, style: `width: ${attributes.width}px` };
+                },
+              },
+              height: {
+                default: null,
+                parseHTML: element => element.getAttribute('height') || element.style.height?.replace('px', '') || null,
+                renderHTML: attributes => {
+                  if (!attributes.height) return {};
+                  return { height: attributes.height };
+                },
+              },
+            };
+          },
+
+          addNodeView() {
+            return ({ node, getPos, editor: nodeEditor }) => {
+              const container = document.createElement('div');
+              container.classList.add('resizable-image-container');
+
+              const img = document.createElement('img');
+              img.src = node.attrs.src;
+              img.alt = node.attrs.alt || '';
+              if (node.attrs.width) {
+                img.style.width = `${node.attrs.width}px`;
+              }
+              img.classList.add('resizable-image');
+
+              // Resize handle
+              const handle = document.createElement('div');
+              handle.classList.add('resize-handle');
+
+              container.appendChild(img);
+              container.appendChild(handle);
+
+              // Resize logic
+              let isResizing = false;
+              let startX, startWidth;
+
+              handle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                isResizing = true;
+                startX = e.clientX;
+                startWidth = img.offsetWidth;
+                container.classList.add('resizing');
+                document.addEventListener('mousemove', onMouseMove);
+                document.addEventListener('mouseup', onMouseUp);
+              });
+
+              const onMouseMove = (e) => {
+                if (!isResizing) return;
+                const diff = e.clientX - startX;
+                const newWidth = Math.max(50, startWidth + diff);
+                img.style.width = `${newWidth}px`;
+              };
+
+              const onMouseUp = (e) => {
+                if (!isResizing) return;
+                isResizing = false;
+                container.classList.remove('resizing');
+                document.removeEventListener('mousemove', onMouseMove);
+                document.removeEventListener('mouseup', onMouseUp);
+
+                // Update node attributes
+                const newWidth = img.offsetWidth;
+                if (typeof getPos === 'function') {
+                  nodeEditor.chain().focus().updateAttributes('resizableImage', {
+                    width: newWidth
+                  }).run();
+                }
+              };
+
+              // Select image on click
+              img.addEventListener('click', () => {
+                if (typeof getPos === 'function') {
+                  nodeEditor.commands.setNodeSelection(getPos());
+                }
+              });
+
+              return {
+                dom: container,
+                update: (updatedNode) => {
+                  if (updatedNode.type.name !== 'resizableImage') return false;
+                  img.src = updatedNode.attrs.src;
+                  img.alt = updatedNode.attrs.alt || '';
+                  if (updatedNode.attrs.width) {
+                    img.style.width = `${updatedNode.attrs.width}px`;
+                  }
+                  return true;
+                },
+                destroy: () => {
+                  document.removeEventListener('mousemove', onMouseMove);
+                  document.removeEventListener('mouseup', onMouseUp);
+                },
+              };
+            };
+          },
+        });
+
         // Debug: Log content being loaded
         console.log('🔍 TipTap loading content:');
         console.log('   - Content length:', editingPost.content?.length || 0);
         console.log('   - Has img tag:', editingPost.content?.includes('<img') || false);
-        console.log('   - First 500 chars:', editingPost.content?.substring(0, 500));
 
         editor = new Editor({
           element: editorContainer,
@@ -401,7 +511,7 @@
             Highlight.configure({ multicolor: true }),
             TextAlign.configure({ types: ['heading', 'paragraph'] }),
             Link.configure({ openOnClick: false }),
-            Image.configure({
+            ResizableImage.configure({
               allowBase64: true,
               inline: false,
             }),
@@ -1975,7 +2085,69 @@
       pointer-events: none;
       height: 0;
     }
-    
+
+    /* Resizable Image Styles */
+    .tiptap-editor-container :global(.resizable-image-container) {
+      display: inline-block;
+      position: relative;
+      margin: 0.5em 0;
+      line-height: 0;
+    }
+
+    .tiptap-editor-container :global(.resizable-image) {
+      display: block;
+      max-width: 100%;
+      height: auto;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+
+    .tiptap-editor-container :global(.resizable-image-container:hover .resize-handle),
+    .tiptap-editor-container :global(.resizable-image-container.resizing .resize-handle) {
+      opacity: 1;
+    }
+
+    .tiptap-editor-container :global(.resize-handle) {
+      position: absolute;
+      right: -6px;
+      bottom: -6px;
+      width: 16px;
+      height: 16px;
+      background: #2563eb;
+      border: 2px solid white;
+      border-radius: 4px;
+      cursor: se-resize;
+      opacity: 0;
+      transition: opacity 0.2s;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+    }
+
+    .tiptap-editor-container :global(.resize-handle::after) {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 6px;
+      height: 6px;
+      border-right: 2px solid white;
+      border-bottom: 2px solid white;
+    }
+
+    .tiptap-editor-container :global(.resizable-image-container.resizing) {
+      user-select: none;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror-selectednode .resizable-image-container) {
+      outline: 2px solid #2563eb;
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    .tiptap-editor-container :global(.ProseMirror-selectednode .resize-handle) {
+      opacity: 1;
+    }
+
     .editor-footer {
       display: flex;
       justify-content: space-between;
