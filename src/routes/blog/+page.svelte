@@ -47,6 +47,15 @@
     let showLinkInput = false; // Show link URL input
     let linkUrl = ''; // Link URL value
 
+    // Vectorization state
+    let vectorizingPostId = null; // Post currently being vectorized
+    let vectorizationStatus = {}; // Map of postId -> { isVectorized, chunkCount }
+
+    // Semantic search state
+    let useSemanticSearch = false;
+    let semanticResults = [];
+    let isSemanticSearching = false;
+
     // Watch for ?new=true in URL and open editor (works for client-side navigation)
     $: if (browser && $page.url.searchParams.get('new') === 'true' && data.user && !showEditor && !closingEditor && !hasOpenedNewPost) {
         hasOpenedNewPost = true;
@@ -73,7 +82,8 @@
             published: false,
             visibility: 'public',
             readGroupIds: [],
-            writeGroupIds: []
+            writeGroupIds: [],
+            source_url: ''
         };
         showEditor = true;
         setTimeout(initEditor, 100);
@@ -142,6 +152,9 @@
           console.error('❌ Failed to load groups:', error);
         }
       }
+
+      // Load vectorization status for all posts
+      await loadVectorizationStatuses();
     });
     
     // Function to handle search form submission
@@ -258,7 +271,8 @@
           path_id: editingPost.path_id || null,  // Use null if no path selected
           visibility: editingPost.visibility || 'public',
           readGroupIds: editingPost.readGroupIds || [],
-          writeGroupIds: editingPost.writeGroupIds || []
+          writeGroupIds: editingPost.writeGroupIds || [],
+          source_url: editingPost.source_url || null  // External URL for link posts
         };
         
         let response;
@@ -734,6 +748,131 @@
       showLinkInput = false;
       linkUrl = '';
     }
+
+    // Vectorization functions
+    async function vectorizePost(postId) {
+      if (vectorizingPostId) return; // Already vectorizing another post
+
+      vectorizingPostId = postId;
+
+      try {
+        const response = await fetch(`/api/posts/${postId}/vectorize`, {
+          method: 'POST'
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          console.log('Vectorization complete:', result.stats);
+          // Update status
+          vectorizationStatus[postId] = {
+            isVectorized: true,
+            chunkCount: result.stats.chunkCount
+          };
+          vectorizationStatus = vectorizationStatus; // Trigger reactivity
+        } else {
+          console.error('Vectorization failed:', result.error);
+          alert(`Vectorization failed: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Vectorization error:', error);
+        alert('Failed to vectorize post');
+      } finally {
+        vectorizingPostId = null;
+      }
+    }
+
+    async function checkVectorizationStatus(postId) {
+      try {
+        const response = await fetch(`/api/posts/${postId}/vectorize`);
+        const result = await response.json();
+
+        if (result.success) {
+          vectorizationStatus[postId] = {
+            isVectorized: result.isVectorized,
+            chunkCount: result.chunkCount
+          };
+          vectorizationStatus = vectorizationStatus; // Trigger reactivity
+        }
+      } catch (error) {
+        console.error('Failed to check vectorization status:', error);
+      }
+    }
+
+    // Semantic search function
+    async function performSemanticSearch() {
+      if (!searchQuery.trim()) {
+        semanticResults = [];
+        return;
+      }
+
+      isSemanticSearching = true;
+
+      try {
+        const response = await fetch(`/api/search/semantic?q=${encodeURIComponent(searchQuery)}&limit=20`);
+        const result = await response.json();
+
+        if (result.success) {
+          semanticResults = result.results;
+          console.log(`Semantic search found ${semanticResults.length} results`);
+        } else {
+          console.error('Semantic search failed:', result.error);
+          semanticResults = [];
+        }
+      } catch (error) {
+        console.error('Semantic search error:', error);
+        semanticResults = [];
+      } finally {
+        isSemanticSearching = false;
+      }
+    }
+
+    // Handle search mode toggle
+    function toggleSearchMode() {
+      useSemanticSearch = !useSemanticSearch;
+      if (useSemanticSearch && searchQuery.trim()) {
+        performSemanticSearch();
+      } else {
+        semanticResults = [];
+        handleSearch();
+      }
+    }
+
+    // Debounced semantic search
+    let semanticSearchTimeout;
+    function debounceSemanticSearch() {
+      if (useSemanticSearch) {
+        clearTimeout(semanticSearchTimeout);
+        semanticSearchTimeout = setTimeout(performSemanticSearch, 500);
+      } else {
+        debounceSearch();
+      }
+    }
+
+    // Load vectorization status for all posts
+    async function loadVectorizationStatuses() {
+      if (!browser) return;
+
+      try {
+        const response = await fetch('/api/posts/vectorization-status');
+        const result = await response.json();
+
+        if (result.success) {
+          // Build status map from response
+          const newStatus = {};
+          for (const status of result.statuses) {
+            newStatus[status.postId] = {
+              isVectorized: status.isVectorized,
+              chunkCount: status.chunkCount
+            };
+          }
+          vectorizationStatus = newStatus;
+          console.log('✅ Loaded vectorization statuses for', result.statuses.length, 'posts');
+        }
+      } catch (error) {
+        console.error('Failed to load vectorization statuses:', error);
+      }
+    }
     
     function createNewPost() {
       if (!data.user) {
@@ -754,7 +893,8 @@
         path_id: paths.length > 0 ? paths[0].id : null,  // Use first available path or null
         visibility: 'public',
         readGroupIds: [],
-        writeGroupIds: []
+        writeGroupIds: [],
+        source_url: ''
       };
       showEditor = true;
       setTimeout(initEditor, 100);
@@ -817,7 +957,8 @@
         tags: fullPost.tags || [],
         visibility: fullPost.visibility || 'public',
         readGroupIds,
-        writeGroupIds
+        writeGroupIds,
+        source_url: fullPost.source_url || ''
       };
       showEditor = true;
       setTimeout(initEditor, 100);
@@ -989,6 +1130,19 @@
                 </select>
                 <div class="path-label">Folder</div>
               </div>
+
+              {#if editingPost.category === 'link'}
+                <div class="input-group source-url-group">
+                  <input
+                    bind:value={editingPost.source_url}
+                    placeholder="External document URL (HTML, PDF, Word)"
+                    class="source-url-input"
+                    type="url"
+                    disabled={loading}
+                  />
+                  <div class="source-url-label">External URL for vectorization</div>
+                </div>
+              {/if}
             </div>
 
             <div class="editor-wrapper">
@@ -1274,17 +1428,27 @@
       <div class="search-section">
         <div class="search-controls">
           <div class="search-bar">
-            <input 
+            <input
               bind:value={searchQuery}
-              on:input={debounceSearch}
-              placeholder="Search posts..."
+              on:input={debounceSemanticSearch}
+              placeholder={useSemanticSearch ? "Semantic search..." : "Search posts..."}
               class="search-input"
-              disabled={loading}
+              class:semantic-active={useSemanticSearch}
+              disabled={loading || isSemanticSearching}
             />
-            <span class="search-icon">🔍</span>
+            <span class="search-icon">{isSemanticSearching ? '...' : '🔍'}</span>
           </div>
-          
-          <select bind:value={selectedCategory} on:change={handleSearch} class="category-filter" disabled={loading}>
+
+          <button
+            class="semantic-toggle"
+            class:active={useSemanticSearch}
+            on:click={toggleSearchMode}
+            title={useSemanticSearch ? "Switch to keyword search" : "Switch to semantic search"}
+          >
+            {useSemanticSearch ? '🧠 Semantic' : '🔤 Keyword'}
+          </button>
+
+          <select bind:value={selectedCategory} on:change={handleSearch} class="category-filter" disabled={loading || useSemanticSearch}>
             <option value="all">All Categories</option>
             {#each categories as category}
               <option value={category.category}>
@@ -1293,7 +1457,7 @@
             {/each}
           </select>
 
-          <select bind:value={selectedAuthor} on:change={handleSearch} class="author-filter" disabled={loading}>
+          <select bind:value={selectedAuthor} on:change={handleSearch} class="author-filter" disabled={loading || useSemanticSearch}>
             <option value="all">All Authors</option>
             {#if authors && authors.length > 0}
               {#each authors as author}
@@ -1310,11 +1474,52 @@
       
       <!-- Posts Section -->
       <main class="posts-section">
-        {#if loading}
+        {#if loading || isSemanticSearching}
           <div class="loading-state">
             <div class="spinner"></div>
-            <p>Loading posts...</p>
+            <p>{isSemanticSearching ? 'Searching with AI...' : 'Loading posts...'}</p>
           </div>
+        {:else if useSemanticSearch && searchQuery.trim()}
+          <!-- Semantic Search Results -->
+          {#if semanticResults.length === 0}
+            <div class="empty-state">
+              <div class="empty-icon">🔍</div>
+              <h2>No semantic matches found</h2>
+              <p>Try different keywords or switch to regular search</p>
+            </div>
+          {:else}
+            <div class="semantic-results-header">
+              <span>Found {semanticResults.length} semantic matches</span>
+            </div>
+            <div class="posts-grid">
+              {#each semanticResults as result (result.postId)}
+                <article class="post-card semantic-result">
+                  <div class="post-header">
+                    <h2 class="post-title">{result.title}</h2>
+                    <div class="similarity-badge" title="Semantic similarity score">
+                      {Math.round(result.similarity * 100)}%
+                    </div>
+                  </div>
+
+                  <div class="post-meta">
+                    <span class="category">📂 {result.category}</span>
+                    {#if result.sourceType && result.sourceType !== 'post'}
+                      <span class="source-type">📄 {result.sourceType.toUpperCase()}</span>
+                    {/if}
+                  </div>
+
+                  <div class="matched-chunk">
+                    <span class="chunk-label">Matched content:</span>
+                    <p>{result.matchedChunk?.substring(0, 200)}{result.matchedChunk?.length > 200 ? '...' : ''}</p>
+                  </div>
+
+                  <div class="post-footer">
+                    <a href="/blog/{result.slug}" class="read-more">Read More →</a>
+                  </div>
+                </article>
+              {/each}
+            </div>
+          {/if}
         {:else if posts.length === 0}
           <div class="empty-state">
             <div class="empty-icon">📝</div>
@@ -1343,6 +1548,23 @@
                   </h2>
                   <div class="post-actions">
                     {#if editablePosts.has(post.id)}
+                      <button
+                        class="action-btn vectorize-btn"
+                        class:vectorized={vectorizationStatus[post.id]?.isVectorized}
+                        on:click={() => vectorizePost(post.id)}
+                        title={vectorizationStatus[post.id]?.isVectorized
+                          ? `Vectorized (${vectorizationStatus[post.id]?.chunkCount} chunks) - Click to re-vectorize`
+                          : 'Vectorize for semantic search'}
+                        disabled={loading || vectorizingPostId === post.id}
+                      >
+                        {#if vectorizingPostId === post.id}
+                          ⏳
+                        {:else if vectorizationStatus[post.id]?.isVectorized}
+                          🧠
+                        {:else}
+                          📊
+                        {/if}
+                      </button>
                       <button class="action-btn" on:click={() => editPost(post)} title="Edit" disabled={loading}>
                         ✏️
                       </button>
@@ -1515,6 +1737,36 @@
       min-width: 200px;
     }
 
+    /* Semantic Search Toggle */
+    .semantic-toggle {
+      padding: 0.75rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: white;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+    }
+
+    .semantic-toggle:hover {
+      background: #f3f4f6;
+    }
+
+    .semantic-toggle.active {
+      background: #8b5cf6;
+      color: white;
+      border-color: #8b5cf6;
+    }
+
+    .search-input.semantic-active {
+      border-color: #8b5cf6;
+    }
+
+    .search-input.semantic-active:focus {
+      outline-color: #8b5cf6;
+    }
+
     /* Button Styles */
     .btn {
       padding: 0.75rem 1.5rem;
@@ -1615,6 +1867,22 @@
     
     .delete-btn:hover:not(:disabled) {
       background: #fee2e2;
+    }
+
+    .vectorize-btn {
+      transition: all 0.2s;
+    }
+
+    .vectorize-btn.vectorized {
+      background: #f0fdf4;
+    }
+
+    .vectorize-btn:hover:not(:disabled) {
+      background: #ede9fe;
+    }
+
+    .vectorize-btn.vectorized:hover:not(:disabled) {
+      background: #dcfce7;
     }
     
     .post-meta {
@@ -1728,6 +1996,60 @@
       background: #f3f4f6;
       color: #dc2626;
     }
+
+    /* Semantic Search Results */
+    .semantic-results-header {
+      background: #f5f3ff;
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      color: #7c3aed;
+      font-weight: 500;
+    }
+
+    .post-card.semantic-result {
+      border-left: 4px solid #8b5cf6;
+    }
+
+    .similarity-badge {
+      background: #8b5cf6;
+      color: white;
+      padding: 0.25rem 0.5rem;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .source-type {
+      background: #fef3c7;
+      color: #92400e;
+      padding: 0.125rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+    }
+
+    .matched-chunk {
+      background: #faf5ff;
+      padding: 0.75rem;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+      font-size: 0.875rem;
+      color: #4b5563;
+    }
+
+    .matched-chunk .chunk-label {
+      display: block;
+      font-size: 0.7rem;
+      color: #7c3aed;
+      font-weight: 600;
+      margin-bottom: 0.25rem;
+      text-transform: uppercase;
+    }
+
+    .matched-chunk p {
+      margin: 0;
+      line-height: 1.5;
+    }
     
     /* Editor Styles */
     .editor-section {
@@ -1835,13 +2157,40 @@
       align-items: center;
     }
     
-    .category-label, .tag-counter, .path-label {
+    .category-label, .tag-counter, .path-label, .source-url-label {
       font-size: 0.75rem;
       color: #6b7280;
       margin-top: 0.25rem;
       display: block;
       min-height: 16px;
       line-height: 16px;
+    }
+
+    /* Source URL Input for Link Posts */
+    .source-url-group {
+      margin-top: 1rem;
+      padding: 1rem;
+      background: #fef3c7;
+      border-radius: 8px;
+      border: 1px solid #fcd34d;
+    }
+
+    .source-url-input {
+      width: 100%;
+      padding: 0.75rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      box-sizing: border-box;
+    }
+
+    .source-url-input:focus {
+      border-color: #f59e0b;
+      outline: none;
+    }
+
+    .source-url-label {
+      color: #92400e;
     }
     
     .tags-input.error {

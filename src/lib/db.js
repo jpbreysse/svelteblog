@@ -194,7 +194,7 @@ export const blogDB = {
    * @returns {Promise<Object>} Created post with ID
    */
   async createPost(postData, authorId) {
-    const { title, content, category = 'thoughts', path_id = null } = postData;
+    const { title, content, category = 'thoughts', path_id = null, source_url = null } = postData;
 
     // Generate slug, read_time, and excerpt
     const slug = generateSlug(title);
@@ -218,10 +218,10 @@ export const blogDB = {
       const result = await client.query(`
         INSERT INTO posts (
           title, content, excerpt, category, category_post_number, slug, read_time,
-          author_id, path_id, published, visibility
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10)
+          author_id, path_id, published, visibility, source_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11)
         RETURNING id, title, slug, category_post_number, created_at
-      `, [title, content, excerpt, category, categoryPostNumber, slug, read_time, authorId, path_id, visibility]);
+      `, [title, content, excerpt, category, categoryPostNumber, slug, read_time, authorId, path_id, visibility, source_url]);
 
       await client.query('COMMIT');
 
@@ -274,16 +274,16 @@ export const blogDB = {
     }
 
     // Update the post
-    const { title, content, category, path_id, visibility } = postData;
+    const { title, content, category, path_id, visibility, source_url } = postData;
     const read_time = calculateReadTime(content);
     const excerpt = generateExcerpt(content);
 
     const result = await pool.query(`
       UPDATE posts
       SET title = $1, content = $2, excerpt = $3, category = $4,
-          read_time = $5, path_id = $6, visibility = $7, updated_at = NOW()
-      WHERE id = $8
-    `, [title, content, excerpt, category, read_time, path_id, visibility || 'public', id]);
+          read_time = $5, path_id = $6, visibility = $7, source_url = $8, updated_at = NOW()
+      WHERE id = $9
+    `, [title, content, excerpt, category, read_time, path_id, visibility || 'public', source_url || null, id]);
 
     if (result.rowCount === 0) {
       throw new Error('Failed to update post');
@@ -1318,6 +1318,168 @@ export const categoryDB = {
     } finally {
       client.release();
     }
+  }
+};
+
+/**
+ * Document chunks database operations for vectorization
+ */
+export const chunksDB = {
+  /**
+   * Save chunks with embeddings for a post
+   * @param {number} postId - Post ID
+   * @param {string[]} chunks - Array of text chunks
+   * @param {number[][]} embeddings - Array of embedding vectors
+   * @param {string} sourceType - Source type ('post', 'html', 'pdf', 'docx')
+   */
+  async saveChunks(postId, chunks, embeddings, sourceType = 'post') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete existing chunks for this post
+      await client.query('DELETE FROM document_chunks WHERE post_id = $1', [postId]);
+
+      // Insert new chunks with embeddings
+      for (let i = 0; i < chunks.length; i++) {
+        // Convert embedding array to pgvector format: [1,2,3]
+        const embeddingStr = '[' + embeddings[i].join(',') + ']';
+
+        await client.query(
+          `INSERT INTO document_chunks (post_id, chunk_index, chunk_text, embedding)
+           VALUES ($1, $2, $3, $4::vector)`,
+          [postId, i, chunks[i], embeddingStr]
+        );
+      }
+
+      // Update post metadata
+      await client.query(
+        `UPDATE posts
+         SET vectorized_at = CURRENT_TIMESTAMP,
+             chunk_count = $1,
+             source_type = $2
+         WHERE id = $3`,
+        [chunks.length, sourceType, postId]
+      );
+
+      await client.query('COMMIT');
+
+      console.log(`✅ Saved ${chunks.length} chunks for post ${postId}`);
+      return { success: true, chunkCount: chunks.length };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Error saving chunks:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Search for similar chunks using vector similarity
+   * @param {number[]} queryEmbedding - Query embedding vector
+   * @param {number} limit - Maximum number of results
+   * @returns {Promise<Array>} Similar chunks with post info
+   */
+  async searchSimilar(queryEmbedding, limit = 10) {
+    // Convert embedding array to pgvector format
+    const embeddingStr = '[' + queryEmbedding.join(',') + ']';
+
+    const result = await pool.query(
+      `SELECT
+         dc.id as chunk_id,
+         dc.post_id,
+         dc.chunk_index,
+         dc.chunk_text,
+         p.title,
+         p.slug,
+         p.category,
+         p.source_url,
+         p.source_type,
+         1 - (dc.embedding <=> $1::vector) as similarity
+       FROM document_chunks dc
+       JOIN posts p ON dc.post_id = p.id
+       WHERE p.published = true
+       ORDER BY dc.embedding <=> $1::vector
+       LIMIT $2`,
+      [embeddingStr, limit]
+    );
+
+    return result.rows;
+  },
+
+  /**
+   * Get all chunks for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Chunks ordered by index
+   */
+  async getChunksByPost(postId) {
+    const result = await pool.query(
+      'SELECT * FROM document_chunks WHERE post_id = $1 ORDER BY chunk_index',
+      [postId]
+    );
+    return result.rows;
+  },
+
+  /**
+   * Delete all chunks for a post
+   * @param {number} postId - Post ID
+   */
+  async deleteChunks(postId) {
+    await pool.query('DELETE FROM document_chunks WHERE post_id = $1', [postId]);
+    await pool.query(
+      'UPDATE posts SET vectorized_at = NULL, chunk_count = 0 WHERE id = $1',
+      [postId]
+    );
+  },
+
+  /**
+   * Check if a post has been vectorized
+   * @param {number} postId - Post ID
+   * @returns {Promise<{vectorized: boolean, chunkCount: number, vectorizedAt: Date|null}>}
+   */
+  async getVectorizationStatus(postId) {
+    const result = await pool.query(
+      'SELECT vectorized_at, chunk_count FROM posts WHERE id = $1',
+      [postId]
+    );
+
+    if (result.rows.length === 0) {
+      return { vectorized: false, chunkCount: 0, vectorizedAt: null };
+    }
+
+    const post = result.rows[0];
+    return {
+      vectorized: post.vectorized_at !== null,
+      chunkCount: post.chunk_count || 0,
+      vectorizedAt: post.vectorized_at
+    };
+  },
+
+  /**
+   * Get all vectorized posts
+   * @returns {Promise<Array>} Posts with vectorization info
+   */
+  async getVectorizedPosts() {
+    const result = await pool.query(
+      `SELECT id, title, slug, category, source_url, source_type, chunk_count, vectorized_at
+       FROM posts
+       WHERE vectorized_at IS NOT NULL
+       ORDER BY vectorized_at DESC`
+    );
+    return result.rows;
+  },
+
+  /**
+   * Update source URL for a link post
+   * @param {number} postId - Post ID
+   * @param {string} sourceUrl - External URL
+   */
+  async updateSourceUrl(postId, sourceUrl) {
+    await pool.query(
+      'UPDATE posts SET source_url = $1 WHERE id = $2',
+      [sourceUrl, postId]
+    );
   }
 };
 

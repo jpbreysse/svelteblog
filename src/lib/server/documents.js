@@ -1,0 +1,234 @@
+/**
+ * Document Fetcher Service
+ * Handles fetching and extracting text from various document types:
+ * - HTML web pages
+ * - PDF files
+ * - Word documents (.docx)
+ */
+
+import * as cheerio from 'cheerio';
+
+// Lazy-load heavy dependencies
+let mammoth = null;
+let pdfParse = null;
+
+/**
+ * Detect document type from URL or content-type
+ * @param {string} url - The URL to analyze
+ * @param {string} contentType - Optional content-type header
+ * @returns {'html' | 'pdf' | 'docx' | 'unknown'}
+ */
+export function detectDocumentType(url, contentType = '') {
+  const lowerUrl = url.toLowerCase();
+  const lowerContentType = contentType.toLowerCase();
+
+  // Check content-type header first
+  if (lowerContentType.includes('application/pdf')) return 'pdf';
+  if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.wordprocessingml')) return 'docx';
+  if (lowerContentType.includes('application/msword')) return 'docx';
+  if (lowerContentType.includes('text/html')) return 'html';
+
+  // Fall back to URL extension
+  if (lowerUrl.endsWith('.pdf')) return 'pdf';
+  if (lowerUrl.endsWith('.docx')) return 'docx';
+  if (lowerUrl.endsWith('.doc')) return 'docx';
+  if (lowerUrl.endsWith('.html') || lowerUrl.endsWith('.htm')) return 'html';
+
+  // Default to HTML for web URLs
+  return 'html';
+}
+
+/**
+ * Fetch and extract text from a URL
+ * @param {string} url - The URL to fetch
+ * @returns {Promise<{text: string, type: string, title: string}>}
+ */
+export async function fetchAndExtractText(url) {
+  console.log(`📥 Fetching document from: ${url}`);
+
+  const response = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (compatible; DocumentFetcher/1.0)',
+      'Accept': 'text/html,application/xhtml+xml,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,*/*'
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch URL: ${response.status} ${response.statusText}`);
+  }
+
+  const contentType = response.headers.get('content-type') || '';
+  const docType = detectDocumentType(url, contentType);
+
+  console.log(`📄 Detected document type: ${docType}`);
+
+  let text = '';
+  let title = '';
+
+  switch (docType) {
+    case 'html':
+      const html = await response.text();
+      const result = extractTextFromHtml(html);
+      text = result.text;
+      title = result.title;
+      break;
+
+    case 'pdf':
+      const pdfBuffer = await response.arrayBuffer();
+      text = await extractTextFromPdf(Buffer.from(pdfBuffer));
+      title = extractTitleFromUrl(url);
+      break;
+
+    case 'docx':
+      const docxBuffer = await response.arrayBuffer();
+      text = await extractTextFromDocx(Buffer.from(docxBuffer));
+      title = extractTitleFromUrl(url);
+      break;
+
+    default:
+      throw new Error(`Unsupported document type: ${docType}`);
+  }
+
+  // Clean up text
+  text = cleanText(text);
+
+  console.log(`✅ Extracted ${text.length} characters`);
+
+  return { text, type: docType, title };
+}
+
+/**
+ * Extract text from HTML content
+ * @param {string} html - HTML content
+ * @returns {{text: string, title: string}}
+ */
+export function extractTextFromHtml(html) {
+  const $ = cheerio.load(html);
+
+  // Get title
+  const title = $('title').text().trim() || $('h1').first().text().trim() || '';
+
+  // Remove unwanted elements
+  $('script, style, nav, header, footer, aside, noscript, iframe, [role="navigation"], [role="banner"], [role="contentinfo"]').remove();
+
+  // Get main content (try common content selectors)
+  let mainContent = $('main, article, [role="main"], .content, .post-content, .article-content, #content').first();
+
+  if (mainContent.length === 0) {
+    mainContent = $('body');
+  }
+
+  // Extract text
+  const text = mainContent.text();
+
+  return { text, title };
+}
+
+/**
+ * Extract text from PDF buffer
+ * @param {Buffer} buffer - PDF file buffer
+ * @returns {Promise<string>}
+ */
+export async function extractTextFromPdf(buffer) {
+  // Lazy load pdf-parse
+  if (!pdfParse) {
+    pdfParse = (await import('pdf-parse')).default;
+  }
+
+  const data = await pdfParse(buffer);
+  return data.text;
+}
+
+/**
+ * Extract text from Word document buffer
+ * @param {Buffer} buffer - DOCX file buffer
+ * @returns {Promise<string>}
+ */
+export async function extractTextFromDocx(buffer) {
+  // Lazy load mammoth
+  if (!mammoth) {
+    mammoth = await import('mammoth');
+  }
+
+  const result = await mammoth.extractRawText({ buffer });
+  return result.value;
+}
+
+/**
+ * Extract text from post HTML content (for regular posts)
+ * @param {string} html - Post HTML content
+ * @returns {string}
+ */
+export function extractTextFromPostContent(html) {
+  if (!html) return '';
+
+  const $ = cheerio.load(html);
+
+  // Remove any script/style that might be in the content
+  $('script, style').remove();
+
+  // Get text
+  const text = $.text();
+
+  return cleanText(text);
+}
+
+/**
+ * Clean extracted text
+ * @param {string} text - Raw text
+ * @returns {string}
+ */
+function cleanText(text) {
+  return text
+    // Replace multiple whitespace with single space
+    .replace(/\s+/g, ' ')
+    // Remove leading/trailing whitespace
+    .trim();
+}
+
+/**
+ * Extract a title from URL
+ * @param {string} url - The URL
+ * @returns {string}
+ */
+function extractTitleFromUrl(url) {
+  try {
+    const pathname = new URL(url).pathname;
+    const filename = pathname.split('/').pop() || '';
+    // Remove extension and clean up
+    return filename.replace(/\.(pdf|docx|doc|html|htm)$/i, '').replace(/[-_]/g, ' ');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Process uploaded file buffer
+ * @param {Buffer} buffer - File buffer
+ * @param {string} filename - Original filename
+ * @returns {Promise<{text: string, type: string}>}
+ */
+export async function extractTextFromBuffer(buffer, filename) {
+  const lowerFilename = filename.toLowerCase();
+
+  let type = 'unknown';
+  let text = '';
+
+  if (lowerFilename.endsWith('.pdf')) {
+    type = 'pdf';
+    text = await extractTextFromPdf(buffer);
+  } else if (lowerFilename.endsWith('.docx')) {
+    type = 'docx';
+    text = await extractTextFromDocx(buffer);
+  } else if (lowerFilename.endsWith('.doc')) {
+    type = 'docx';
+    text = await extractTextFromDocx(buffer);
+  } else if (lowerFilename.endsWith('.txt')) {
+    type = 'text';
+    text = buffer.toString('utf-8');
+  } else {
+    throw new Error(`Unsupported file type: ${filename}`);
+  }
+
+  return { text: cleanText(text), type };
+}
