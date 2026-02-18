@@ -1744,18 +1744,6 @@
                   <div class="post-actions">
                     {#if editablePosts.has(post.id)}
                       <button
-                        class="action-btn upload-btn"
-                        on:click={() => triggerFileUpload(post.id)}
-                        title="Upload file to vectorize (PDF, Word, TXT)"
-                        disabled={loading || uploadingPostId === post.id}
-                      >
-                        {#if uploadingPostId === post.id}
-                          ⏳
-                        {:else}
-                          📤
-                        {/if}
-                      </button>
-                      <button
                         class="action-btn vectorize-btn"
                         class:vectorized={vectorizationStatus[post.id]?.isVectorized}
                         on:click={() => vectorizePost(post.id)}
