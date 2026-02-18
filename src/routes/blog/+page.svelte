@@ -50,9 +50,10 @@
     // Vectorization state
     let vectorizingPostId = null; // Post currently being vectorized
     let vectorizationStatus = {}; // Map of postId -> { isVectorized, chunkCount }
+    let uploadingPostId = null; // Post currently uploading file for
 
     // Semantic search state
-    let useSemanticSearch = false;
+    let searchMode = 'keyword'; // 'keyword', 'semantic', 'hybrid'
     let semanticResults = [];
     let isSemanticSearching = false;
 
@@ -660,7 +661,63 @@
       pdfJsLoaded = true;
     }
 
-    async function importPdf() {
+    async function importDocument() {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,.docx,.pptx,.txt,.html,.htm';
+
+      input.onchange = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        if (file.size > 20 * 1024 * 1024) {
+          alert('File is too large. Maximum size is 20MB.');
+          return;
+        }
+
+        importingPdf = true;
+
+        try {
+          // Use server-side extraction for all document types
+          const formData = new FormData();
+          formData.append('file', file);
+
+          const response = await fetch('/api/documents/extract', {
+            method: 'POST',
+            body: formData
+          });
+
+          const result = await response.json();
+
+          if (!result.success) {
+            throw new Error(result.error);
+          }
+
+          // Convert text to HTML paragraphs
+          const paragraphs = result.text
+            .split(/\n\n+/)
+            .filter(p => p.trim())
+            .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+            .join('');
+
+          // Insert into editor
+          editor?.chain().focus().insertContent(paragraphs).run();
+
+          console.log(`Imported ${result.charCount} characters from ${result.fileName}`);
+
+        } catch (error) {
+          console.error('Document import error:', error);
+          alert('Failed to import document: ' + error.message);
+        } finally {
+          importingPdf = false;
+        }
+      };
+
+      input.click();
+    }
+
+    // Keep old PDF import for backward compatibility (client-side)
+    async function importPdfClientSide() {
       const input = document.createElement('input');
       input.type = 'file';
       input.accept = '.pdf,application/pdf';
@@ -799,7 +856,58 @@
       }
     }
 
-    // Semantic search function
+    // File upload for vectorization
+    async function uploadAndVectorize(postId, file) {
+      if (uploadingPostId) return;
+
+      uploadingPostId = postId;
+
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const response = await fetch(`/api/posts/${postId}/upload-vectorize`, {
+          method: 'POST',
+          body: formData
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+          console.log('Upload and vectorization complete:', result.stats);
+          vectorizationStatus[postId] = {
+            isVectorized: true,
+            chunkCount: result.stats.chunkCount
+          };
+          vectorizationStatus = vectorizationStatus;
+          alert(`File vectorized: ${result.stats.chunkCount} chunks created from ${result.stats.fileName}`);
+        } else {
+          console.error('Upload failed:', result.error);
+          alert(`Upload failed: ${result.error}`);
+        }
+      } catch (error) {
+        console.error('Upload error:', error);
+        alert('Failed to upload file');
+      } finally {
+        uploadingPostId = null;
+      }
+    }
+
+    // Trigger file input for a post
+    function triggerFileUpload(postId) {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.pdf,.docx,.pptx,.txt,.html,.htm';
+      input.onchange = (e) => {
+        const file = e.target.files?.[0];
+        if (file) {
+          uploadAndVectorize(postId, file);
+        }
+      };
+      input.click();
+    }
+
+    // Semantic/Hybrid search function
     async function performSemanticSearch() {
       if (!searchQuery.trim()) {
         semanticResults = [];
@@ -809,28 +917,41 @@
       isSemanticSearching = true;
 
       try {
-        const response = await fetch(`/api/search/semantic?q=${encodeURIComponent(searchQuery)}&limit=20`);
+        // Use hybrid or semantic endpoint based on mode
+        const endpoint = searchMode === 'hybrid' ? 'hybrid' : 'semantic';
+        const response = await fetch(`/api/search/${endpoint}?q=${encodeURIComponent(searchQuery)}&limit=20`);
         const result = await response.json();
 
         if (result.success) {
-          semanticResults = result.results;
-          console.log(`Semantic search found ${semanticResults.length} results`);
+          semanticResults = result.results.map(r => ({
+            ...r,
+            // Normalize score field name
+            similarity: r.hybridScore || r.similarity
+          }));
+          console.log(`${searchMode} search found ${semanticResults.length} results`);
         } else {
-          console.error('Semantic search failed:', result.error);
+          console.error(`${searchMode} search failed:`, result.error);
           semanticResults = [];
         }
       } catch (error) {
-        console.error('Semantic search error:', error);
+        console.error(`${searchMode} search error:`, error);
         semanticResults = [];
       } finally {
         isSemanticSearching = false;
       }
     }
 
-    // Handle search mode toggle
-    function toggleSearchMode() {
-      useSemanticSearch = !useSemanticSearch;
-      if (useSemanticSearch && searchQuery.trim()) {
+    // Cycle through search modes: keyword -> hybrid -> semantic -> keyword
+    function cycleSearchMode() {
+      if (searchMode === 'keyword') {
+        searchMode = 'hybrid';
+      } else if (searchMode === 'hybrid') {
+        searchMode = 'semantic';
+      } else {
+        searchMode = 'keyword';
+      }
+
+      if (searchMode !== 'keyword' && searchQuery.trim()) {
         performSemanticSearch();
       } else {
         semanticResults = [];
@@ -838,10 +959,10 @@
       }
     }
 
-    // Debounced semantic search
+    // Debounced semantic/hybrid search
     let semanticSearchTimeout;
     function debounceSemanticSearch() {
-      if (useSemanticSearch) {
+      if (searchMode !== 'keyword') {
         clearTimeout(semanticSearchTimeout);
         semanticSearchTimeout = setTimeout(performSemanticSearch, 500);
       } else {
@@ -1066,7 +1187,7 @@
         </div>
 
         <div class="editor-layout">
-          <!-- Left Sidebar: Permissions -->
+          <!-- Left Sidebar: Permissions & Vectorization -->
           <aside class="editor-sidebar">
             <PostPermissions
               bind:visibility={editingPost.visibility}
@@ -1074,6 +1195,59 @@
               bind:writeGroupIds={editingPost.writeGroupIds}
               availableGroups={userGroups}
             />
+
+            <!-- Vectorization Panel -->
+            <div class="vectorization-panel">
+              <h4>Vectorization</h4>
+              {#if editingPost.id}
+                <div class="vector-status">
+                  {#if vectorizationStatus[editingPost.id]?.isVectorized}
+                    <span class="status-badge vectorized">
+                      🧠 Vectorized ({vectorizationStatus[editingPost.id]?.chunkCount} chunks)
+                    </span>
+                  {:else}
+                    <span class="status-badge not-vectorized">
+                      Not vectorized
+                    </span>
+                  {/if}
+                </div>
+                <div class="vector-actions">
+                  <button
+                    type="button"
+                    class="vector-btn"
+                    on:click={() => vectorizePost(editingPost.id)}
+                    disabled={vectorizingPostId === editingPost.id}
+                  >
+                    {#if vectorizingPostId === editingPost.id}
+                      ⏳ Vectorizing...
+                    {:else if vectorizationStatus[editingPost.id]?.isVectorized}
+                      🔄 Re-vectorize
+                    {:else}
+                      🧠 Vectorize Post
+                    {/if}
+                  </button>
+                  <button
+                    type="button"
+                    class="vector-btn upload"
+                    on:click={() => triggerFileUpload(editingPost.id)}
+                    disabled={uploadingPostId === editingPost.id}
+                  >
+                    {#if uploadingPostId === editingPost.id}
+                      ⏳ Uploading...
+                    {:else}
+                      📤 Upload & Vectorize
+                    {/if}
+                  </button>
+                </div>
+                <p class="vector-hint">
+                  Vectorize to enable semantic search. Upload a file (PDF, Word, PowerPoint, TXT) to vectorize external content.
+                </p>
+              {:else}
+                <p class="vector-hint">
+                  Save the post first to enable vectorization.
+                </p>
+              {/if}
+            </div>
           </aside>
 
           <!-- Main Content Area -->
@@ -1300,10 +1474,10 @@
                     <button
                       type="button"
                       class="toolbar-btn"
-                      on:click={importPdf}
+                      on:click={importDocument}
                       disabled={importingPdf}
-                      title="Import PDF (extract text)"
-                    >{importingPdf ? '⏳' : '📄'}</button>
+                      title="Import document (PDF, Word, PowerPoint, TXT, HTML)"
+                    >{importingPdf ? '⏳' : '📥'}</button>
                   </div>
 
                   <div class="toolbar-group">
@@ -1431,9 +1605,10 @@
             <input
               bind:value={searchQuery}
               on:input={debounceSemanticSearch}
-              placeholder={useSemanticSearch ? "Semantic search..." : "Search posts..."}
+              placeholder={searchMode === 'keyword' ? "Search posts..." : searchMode === 'hybrid' ? "Hybrid search..." : "Semantic search..."}
               class="search-input"
-              class:semantic-active={useSemanticSearch}
+              class:semantic-active={searchMode === 'semantic'}
+              class:hybrid-active={searchMode === 'hybrid'}
               disabled={loading || isSemanticSearching}
             />
             <span class="search-icon">{isSemanticSearching ? '...' : '🔍'}</span>
@@ -1441,14 +1616,21 @@
 
           <button
             class="semantic-toggle"
-            class:active={useSemanticSearch}
-            on:click={toggleSearchMode}
-            title={useSemanticSearch ? "Switch to keyword search" : "Switch to semantic search"}
+            class:active={searchMode !== 'keyword'}
+            class:hybrid={searchMode === 'hybrid'}
+            on:click={cycleSearchMode}
+            title={searchMode === 'keyword' ? 'Click for Hybrid (keyword + semantic)' : searchMode === 'hybrid' ? 'Click for Semantic only' : 'Click for Keyword only'}
           >
-            {useSemanticSearch ? '🧠 Semantic' : '🔤 Keyword'}
+            {#if searchMode === 'keyword'}
+              🔤 Keyword
+            {:else if searchMode === 'hybrid'}
+              🔀 Hybrid
+            {:else}
+              🧠 Semantic
+            {/if}
           </button>
 
-          <select bind:value={selectedCategory} on:change={handleSearch} class="category-filter" disabled={loading || useSemanticSearch}>
+          <select bind:value={selectedCategory} on:change={handleSearch} class="category-filter" disabled={loading || searchMode !== 'keyword'}>
             <option value="all">All Categories</option>
             {#each categories as category}
               <option value={category.category}>
@@ -1457,7 +1639,7 @@
             {/each}
           </select>
 
-          <select bind:value={selectedAuthor} on:change={handleSearch} class="author-filter" disabled={loading || useSemanticSearch}>
+          <select bind:value={selectedAuthor} on:change={handleSearch} class="author-filter" disabled={loading || searchMode !== 'keyword'}>
             <option value="all">All Authors</option>
             {#if authors && authors.length > 0}
               {#each authors as author}
@@ -1479,25 +1661,38 @@
             <div class="spinner"></div>
             <p>{isSemanticSearching ? 'Searching with AI...' : 'Loading posts...'}</p>
           </div>
-        {:else if useSemanticSearch && searchQuery.trim()}
-          <!-- Semantic Search Results -->
+        {:else if searchMode !== 'keyword' && searchQuery.trim()}
+          <!-- Semantic/Hybrid Search Results -->
           {#if semanticResults.length === 0}
             <div class="empty-state">
               <div class="empty-icon">🔍</div>
-              <h2>No semantic matches found</h2>
+              <h2>No {searchMode} matches found</h2>
               <p>Try different keywords or switch to regular search</p>
             </div>
           {:else}
-            <div class="semantic-results-header">
-              <span>Found {semanticResults.length} semantic matches</span>
+            <div class="semantic-results-header" class:hybrid-header={searchMode === 'hybrid'}>
+              <span>
+                {#if searchMode === 'hybrid'}
+                  🔀 Found {semanticResults.length} hybrid matches (keyword + semantic)
+                {:else}
+                  🧠 Found {semanticResults.length} semantic matches
+                {/if}
+              </span>
             </div>
             <div class="posts-grid">
               {#each semanticResults as result (result.postId)}
-                <article class="post-card semantic-result">
+                <article class="post-card semantic-result" class:keyword-match={result.keywordMatch}>
                   <div class="post-header">
                     <h2 class="post-title">{result.title}</h2>
-                    <div class="similarity-badge" title="Semantic similarity score">
-                      {Math.round(result.similarity * 100)}%
+                    <div class="score-badges">
+                      {#if result.keywordMatch}
+                        <div class="keyword-badge" title="Contains search keywords">
+                          🔤
+                        </div>
+                      {/if}
+                      <div class="similarity-badge" class:hybrid-badge={searchMode === 'hybrid'} title="{searchMode === 'hybrid' ? 'Hybrid score' : 'Semantic similarity'}">
+                        {Math.round(result.similarity * 100)}%
+                      </div>
                     </div>
                   </div>
 
@@ -1549,12 +1744,24 @@
                   <div class="post-actions">
                     {#if editablePosts.has(post.id)}
                       <button
+                        class="action-btn upload-btn"
+                        on:click={() => triggerFileUpload(post.id)}
+                        title="Upload file to vectorize (PDF, Word, TXT)"
+                        disabled={loading || uploadingPostId === post.id}
+                      >
+                        {#if uploadingPostId === post.id}
+                          ⏳
+                        {:else}
+                          📤
+                        {/if}
+                      </button>
+                      <button
                         class="action-btn vectorize-btn"
                         class:vectorized={vectorizationStatus[post.id]?.isVectorized}
                         on:click={() => vectorizePost(post.id)}
                         title={vectorizationStatus[post.id]?.isVectorized
                           ? `Vectorized (${vectorizationStatus[post.id]?.chunkCount} chunks) - Click to re-vectorize`
-                          : 'Vectorize for semantic search'}
+                          : 'Vectorize post content'}
                         disabled={loading || vectorizingPostId === post.id}
                       >
                         {#if vectorizingPostId === post.id}
@@ -1759,12 +1966,25 @@
       border-color: #8b5cf6;
     }
 
+    .semantic-toggle.hybrid {
+      background: #10b981;
+      border-color: #10b981;
+    }
+
     .search-input.semantic-active {
       border-color: #8b5cf6;
     }
 
+    .search-input.hybrid-active {
+      border-color: #10b981;
+    }
+
     .search-input.semantic-active:focus {
       outline-color: #8b5cf6;
+    }
+
+    .search-input.hybrid-active:focus {
+      outline-color: #10b981;
     }
 
     /* Button Styles */
@@ -1883,6 +2103,94 @@
 
     .vectorize-btn.vectorized:hover:not(:disabled) {
       background: #dcfce7;
+    }
+
+    .upload-btn {
+      transition: all 0.2s;
+    }
+
+    .upload-btn:hover:not(:disabled) {
+      background: #fef3c7;
+    }
+
+    /* Vectorization Panel in Editor */
+    .vectorization-panel {
+      margin-top: 1.5rem;
+      padding: 1rem;
+      background: #f9fafb;
+      border-radius: 8px;
+      border: 1px solid #e5e7eb;
+    }
+
+    .vectorization-panel h4 {
+      margin: 0 0 0.75rem 0;
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #374151;
+    }
+
+    .vector-status {
+      margin-bottom: 0.75rem;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .status-badge.vectorized {
+      background: #d1fae5;
+      color: #065f46;
+    }
+
+    .status-badge.not-vectorized {
+      background: #f3f4f6;
+      color: #6b7280;
+    }
+
+    .vector-actions {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .vector-btn {
+      padding: 0.5rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: white;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+      text-align: center;
+    }
+
+    .vector-btn:hover:not(:disabled) {
+      background: #f3f4f6;
+    }
+
+    .vector-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
+    .vector-btn.upload {
+      background: #fef3c7;
+      border-color: #fcd34d;
+    }
+
+    .vector-btn.upload:hover:not(:disabled) {
+      background: #fde68a;
+    }
+
+    .vector-hint {
+      margin: 0.75rem 0 0 0;
+      font-size: 0.7rem;
+      color: #6b7280;
+      line-height: 1.4;
     }
     
     .post-meta {
@@ -2007,8 +2315,23 @@
       font-weight: 500;
     }
 
+    .semantic-results-header.hybrid-header {
+      background: #ecfdf5;
+      color: #059669;
+    }
+
     .post-card.semantic-result {
       border-left: 4px solid #8b5cf6;
+    }
+
+    .post-card.semantic-result.keyword-match {
+      border-left: 4px solid #10b981;
+    }
+
+    .score-badges {
+      display: flex;
+      gap: 0.25rem;
+      align-items: center;
     }
 
     .similarity-badge {
@@ -2018,6 +2341,17 @@
       border-radius: 12px;
       font-size: 0.75rem;
       font-weight: 600;
+    }
+
+    .similarity-badge.hybrid-badge {
+      background: #10b981;
+    }
+
+    .keyword-badge {
+      background: #fef3c7;
+      padding: 0.25rem 0.4rem;
+      border-radius: 12px;
+      font-size: 0.7rem;
     }
 
     .source-type {

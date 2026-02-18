@@ -11,12 +11,13 @@ import * as cheerio from 'cheerio';
 // Lazy-load heavy dependencies
 let mammoth = null;
 let pdfParse = null;
+let officeParser = null;
 
 /**
  * Detect document type from URL or content-type
  * @param {string} url - The URL to analyze
  * @param {string} contentType - Optional content-type header
- * @returns {'html' | 'pdf' | 'docx' | 'unknown'}
+ * @returns {'html' | 'pdf' | 'docx' | 'pptx' | 'unknown'}
  */
 export function detectDocumentType(url, contentType = '') {
   const lowerUrl = url.toLowerCase();
@@ -25,13 +26,17 @@ export function detectDocumentType(url, contentType = '') {
   // Check content-type header first
   if (lowerContentType.includes('application/pdf')) return 'pdf';
   if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.wordprocessingml')) return 'docx';
+  if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.presentationml')) return 'pptx';
   if (lowerContentType.includes('application/msword')) return 'docx';
+  if (lowerContentType.includes('application/vnd.ms-powerpoint')) return 'pptx';
   if (lowerContentType.includes('text/html')) return 'html';
 
   // Fall back to URL extension
   if (lowerUrl.endsWith('.pdf')) return 'pdf';
   if (lowerUrl.endsWith('.docx')) return 'docx';
   if (lowerUrl.endsWith('.doc')) return 'docx';
+  if (lowerUrl.endsWith('.pptx')) return 'pptx';
+  if (lowerUrl.endsWith('.ppt')) return 'pptx';
   if (lowerUrl.endsWith('.html') || lowerUrl.endsWith('.htm')) return 'html';
 
   // Default to HTML for web URLs
@@ -82,6 +87,12 @@ export async function fetchAndExtractText(url) {
     case 'docx':
       const docxBuffer = await response.arrayBuffer();
       text = await extractTextFromDocx(Buffer.from(docxBuffer));
+      title = extractTitleFromUrl(url);
+      break;
+
+    case 'pptx':
+      const pptxBuffer = await response.arrayBuffer();
+      text = await extractTextFromPptx(Buffer.from(pptxBuffer));
       title = extractTitleFromUrl(url);
       break;
 
@@ -152,6 +163,22 @@ export async function extractTextFromDocx(buffer) {
 
   const result = await mammoth.extractRawText({ buffer });
   return result.value;
+}
+
+/**
+ * Extract text from PowerPoint buffer
+ * @param {Buffer} buffer - PPTX file buffer
+ * @returns {Promise<string>}
+ */
+export async function extractTextFromPptx(buffer) {
+  // Lazy load officeparser
+  if (!officeParser) {
+    officeParser = await import('officeparser');
+  }
+
+  // v6.0.0 API: parseOffice returns AST, use .toText() for plain text
+  const ast = await officeParser.parseOffice(buffer);
+  return ast.toText();
 }
 
 /**

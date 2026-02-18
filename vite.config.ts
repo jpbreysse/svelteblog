@@ -5,7 +5,7 @@ export default defineConfig({
 	plugins: [sveltekit()],
 	ssr: {
 		// Externalize Node.js modules that shouldn't be bundled
-		external: ['@xenova/transformers', 'mammoth', 'pdf-parse', 'cheerio']
+		external: ['@xenova/transformers', 'mammoth', 'pdf-parse', 'cheerio', 'officeparser']
 	},
 	optimizeDeps: {
 		// Exclude from client-side optimization (server-only modules)
