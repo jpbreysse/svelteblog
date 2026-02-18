@@ -572,10 +572,7 @@
   <!-- Left Sidebar: Path & Post Tree -->
   <aside class="sidebar" class:collapsed={leftPanelCollapsed}>
     <div class="sidebar-header">
-      <button class="btn-collapse" on:click={toggleLeftPanel} title="Collapse sidebar">
-        ◀
-      </button>
-      <h3>📁 Content</h3>
+      <h3>Content</h3>
       <button
         class="btn-new-post"
         on:click={() => {

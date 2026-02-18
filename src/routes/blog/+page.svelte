@@ -169,11 +169,11 @@
       goto(url);
     }
     
-    // Debounced search
+    // Debounced search - wait 800ms after user stops typing
     let searchTimeout;
     function debounceSearch() {
       clearTimeout(searchTimeout);
-      searchTimeout = setTimeout(handleSearch, 500);
+      searchTimeout = setTimeout(handleSearch, 800);
     }
     
     // Validation function
@@ -959,12 +959,12 @@
       }
     }
 
-    // Debounced semantic/hybrid search
+    // Debounced semantic/hybrid search - wait 800ms after user stops typing
     let semanticSearchTimeout;
     function debounceSemanticSearch() {
       if (searchMode !== 'keyword') {
         clearTimeout(semanticSearchTimeout);
-        semanticSearchTimeout = setTimeout(performSemanticSearch, 500);
+        semanticSearchTimeout = setTimeout(performSemanticSearch, 800);
       } else {
         debounceSearch();
       }
