@@ -101,7 +101,7 @@ export const blogDB = {
     const result = await pool.query(`
       SELECT
         p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
-        p.read_time, p.created_at, p.updated_at, p.published, p.visibility,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility, p.source_url,
         u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
@@ -125,7 +125,7 @@ export const blogDB = {
     const result = await pool.query(`
       SELECT
         p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
-        p.read_time, p.created_at, p.updated_at, p.published, p.visibility,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility, p.source_url,
         u.id as author_id, u.display_name as author, u.email as author_email,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
         pa.full_path as path
@@ -391,7 +391,7 @@ export const blogDB = {
   async searchPosts(query, category = null) {
     let sql = `
       SELECT
-        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility,
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
         p.created_at, u.id as author_id, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
@@ -423,7 +423,7 @@ export const blogDB = {
   async getPostsByCategory(category) {
     const result = await pool.query(`
       SELECT
-        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility,
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
         p.created_at, u.id as author_id, u.display_name as author,
         array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
@@ -1385,6 +1385,8 @@ export const chunksDB = {
     // Convert embedding array to pgvector format
     const embeddingStr = '[' + queryEmbedding.join(',') + ']';
 
+    // Fetch all chunks with similarity scores and sort in JavaScript
+    // This avoids ivfflat index issues with small datasets
     const result = await pool.query(
       `SELECT
          dc.id as chunk_id,
@@ -1399,13 +1401,17 @@ export const chunksDB = {
          1 - (dc.embedding <=> $1::vector) as similarity
        FROM document_chunks dc
        JOIN posts p ON dc.post_id = p.id
-       WHERE p.published = true
-       ORDER BY dc.embedding <=> $1::vector
-       LIMIT $2`,
-      [embeddingStr, limit]
+       WHERE p.published = true`,
+      [embeddingStr]
     );
 
-    return result.rows;
+    // Sort by similarity descending and limit
+    const sorted = result.rows
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, parseInt(limit));
+
+    console.log(`   Semantic search: ${result.rows.length} total chunks, returning top ${sorted.length}`);
+    return sorted;
   },
 
   /**

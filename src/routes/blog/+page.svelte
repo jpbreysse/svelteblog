@@ -1776,7 +1776,15 @@
                   <span class="read-time">⏱️ {post.read_time}</span>
                   <span class="category">📂 {post.category}</span>
                 </div>
-                
+
+                {#if post.category === 'link' && post.source_url}
+                  <div class="external-link">
+                    <a href={post.source_url} target="_blank" rel="noopener noreferrer" class="source-link">
+                      🔗 {post.source_url}
+                    </a>
+                  </div>
+                {/if}
+
                 <div class="post-excerpt">
                   {@html post.excerpt}
                 </div>
@@ -2188,6 +2196,26 @@
       font-size: 0.875rem;
       color: #6b7280;
       margin-bottom: 1rem;
+    }
+
+    .external-link {
+      margin-bottom: 1rem;
+      padding: 0.5rem 0.75rem;
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      border-radius: 6px;
+    }
+
+    .source-link {
+      color: #166534;
+      text-decoration: none;
+      font-size: 0.875rem;
+      word-break: break-all;
+    }
+
+    .source-link:hover {
+      text-decoration: underline;
+      color: #15803d;
     }
 
     .post-number {

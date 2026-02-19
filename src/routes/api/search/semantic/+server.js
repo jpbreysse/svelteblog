@@ -34,6 +34,7 @@ export async function GET({ url }) {
 
     // Generate embedding for the query
     const queryEmbedding = await generateEmbedding(query);
+    console.log(`   Embedding generated, length: ${queryEmbedding.length}, first 3: ${queryEmbedding.slice(0,3).join(', ')}`);
 
     // Search for similar chunks
     const results = await chunksDB.searchSimilar(queryEmbedding, limit);
