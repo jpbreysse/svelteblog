@@ -1486,6 +1486,145 @@ export const chunksDB = {
       'UPDATE posts SET source_url = $1 WHERE id = $2',
       [sourceUrl, postId]
     );
+  },
+
+  // ============================================
+  // Stage 2: Chunk Review Operations
+  // ============================================
+
+  /**
+   * Get unreviewed chunks
+   * @param {number} limit - Maximum number of chunks to return
+   * @param {number|null} postId - Filter by post ID (optional)
+   * @returns {Promise<Array>} Unreviewed chunks
+   */
+  async getUnreviewedChunks(limit = 10, postId = null) {
+    let query = `
+      SELECT dc.id, dc.post_id, dc.chunk_index, dc.chunk_text, p.title as post_title
+      FROM document_chunks dc
+      JOIN posts p ON dc.post_id = p.id
+      WHERE dc.reviewed_at IS NULL
+    `;
+    const params = [];
+
+    if (postId) {
+      params.push(postId);
+      query += ` AND dc.post_id = $${params.length}`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY dc.post_id, dc.chunk_index LIMIT $${params.length}`;
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  },
+
+  /**
+   * Update chunk with review data
+   * @param {number} chunkId - Chunk ID
+   * @param {Object} reviewData - Review results
+   */
+  async updateChunkReview(chunkId, reviewData) {
+    const {
+      quality_score,
+      doc_type,
+      auto_tags,
+      summary,
+      keywords,
+      redundant_of
+    } = reviewData;
+
+    await pool.query(
+      `UPDATE document_chunks
+       SET quality_score = $1,
+           doc_type = $2,
+           auto_tags = $3,
+           summary = $4,
+           keywords = $5,
+           redundant_of = $6,
+           reviewed_at = CURRENT_TIMESTAMP
+       WHERE id = $7`,
+      [
+        quality_score,
+        doc_type,
+        auto_tags,
+        summary,
+        keywords,
+        redundant_of || null,
+        chunkId
+      ]
+    );
+  },
+
+  /**
+   * Find similar chunks for redundancy detection
+   * @param {number} chunkId - Chunk ID to compare against
+   * @param {number} threshold - Similarity threshold (default: 0.92)
+   * @returns {Promise<Array>} Similar chunks
+   */
+  async findSimilarChunks(chunkId, threshold = 0.92) {
+    const result = await pool.query(
+      `SELECT
+         dc2.id,
+         dc2.post_id,
+         dc2.chunk_text,
+         1 - (dc1.embedding <=> dc2.embedding) as similarity
+       FROM document_chunks dc1
+       JOIN document_chunks dc2 ON dc1.id != dc2.id
+       WHERE dc1.id = $1
+         AND 1 - (dc1.embedding <=> dc2.embedding) > $2
+       ORDER BY similarity DESC
+       LIMIT 5`,
+      [chunkId, threshold]
+    );
+    return result.rows;
+  },
+
+  /**
+   * Mark chunk as redundant
+   * @param {number} chunkId - Chunk to mark as redundant
+   * @param {number} redundantOfId - Original chunk ID
+   */
+  async markRedundant(chunkId, redundantOfId) {
+    await pool.query(
+      'UPDATE document_chunks SET redundant_of = $1 WHERE id = $2',
+      [redundantOfId, chunkId]
+    );
+  },
+
+  /**
+   * Get review statistics
+   * @returns {Promise<Object>} Review stats
+   */
+  async getReviewStats() {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) as total_chunks,
+        COUNT(reviewed_at) as reviewed_chunks,
+        COUNT(*) FILTER (WHERE quality_score < 0.5) as low_quality,
+        COUNT(redundant_of) as redundant,
+        COUNT(*) FILTER (WHERE doc_type = 'technicaldoc') as technicaldoc_count,
+        COUNT(*) FILTER (WHERE doc_type = 'meetingsummary') as meetingsummary_count
+      FROM document_chunks
+    `);
+    return result.rows[0];
+  },
+
+  /**
+   * Get chunks with review data for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Reviewed chunks
+   */
+  async getReviewedChunks(postId) {
+    const result = await pool.query(
+      `SELECT id, chunk_index, chunk_text, quality_score, doc_type,
+              auto_tags, summary, keywords, redundant_of, reviewed_at
+       FROM document_chunks
+       WHERE post_id = $1
+       ORDER BY chunk_index`,
+      [postId]
+    );
+    return result.rows;
   }
 };
 

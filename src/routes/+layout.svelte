@@ -45,6 +45,7 @@
 			<a href="/explorer" class:active={$page.url.pathname === '/explorer'}>📁 Folders</a>
 			<a href="/groups" class:active={$page.url.pathname.startsWith('/groups')}>🔐 Access</a>
 			<a href="/tickets" class:active={$page.url.pathname === '/tickets'}>🎫 Tickets</a>
+			<a href="/chat" class:active={$page.url.pathname === '/chat'}>💬 Chat</a>
 
 			{#if data.user.role === 'admin'}
 				<!-- Admin dropdown -->
