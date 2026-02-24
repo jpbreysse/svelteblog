@@ -46,6 +46,7 @@
 			<a href="/groups" class:active={$page.url.pathname.startsWith('/groups')}>🔐 Access</a>
 			<a href="/tickets" class:active={$page.url.pathname === '/tickets'}>🎫 Tickets</a>
 			<a href="/chat" class:active={$page.url.pathname === '/chat'}>💬 Chat</a>
+			<a href="/workflow" class:active={$page.url.pathname === '/workflow'}>🔄 Workflow</a>
 
 			{#if data.user.role === 'admin'}
 				<!-- Admin dropdown -->

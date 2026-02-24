@@ -19,9 +19,14 @@ import { generateEmbedding } from '$lib/server/embeddings.js';
 import { generateStream, checkOllama } from '$lib/server/ollama.js';
 
 /**
- * Perform hybrid search (semantic + keyword)
+ * Perform hybrid search (semantic + keyword) with permission filtering
+ * @param {string} query - Search query
+ * @param {number} userId - Current user ID
+ * @param {string} userRole - User role ('user' or 'admin')
+ * @param {number} limit - Max results
+ * @param {number} keywordWeight - Weight for keyword matching
  */
-async function hybridSearch(query, limit = 5, keywordWeight = 0.3) {
+async function hybridSearch(query, userId, userRole = 'user', limit = 5, keywordWeight = 0.3) {
   // Generate embedding
   const queryEmbedding = await generateEmbedding(query);
   const embeddingStr = '[' + queryEmbedding.join(',') + ']';
@@ -38,11 +43,16 @@ async function hybridSearch(query, limit = 5, keywordWeight = 0.3) {
     .split(/\s+/)
     .filter(word => word.length > 2 && !stopWords.has(word));
 
-  // Build SQL
-  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 3}`);
+  // Build SQL - keyword params start at $5 (after embedding, limit, userId, isAdmin)
+  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 5}`);
   const keywordParams = keywords.map(k => `%${k}%`);
 
-  // Hybrid query
+  // Permission filtering:
+  // - Admins can see all published posts
+  // - Users can see: public posts, their own posts, or posts in groups they belong to
+  const isAdmin = userRole === 'admin';
+
+  // Hybrid query with permission filtering
   const result = await pool.query(
     `WITH ranked_chunks AS (
       SELECT
@@ -62,23 +72,37 @@ async function hybridSearch(query, limit = 5, keywordWeight = 0.3) {
           THEN 1.0
           ELSE 0.0
         END as keyword_match,
-        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 3} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
+        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 5} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
       FROM document_chunks dc
       JOIN posts p ON dc.post_id = p.id
+      LEFT JOIN post_read_groups prg ON p.id = prg.post_id
+      LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $3
       WHERE p.published = true
+        AND (
+          -- Admins can see everything
+          $4 = true
+          -- Public posts
+          OR p.visibility = 'public'
+          -- User's own posts
+          OR p.author_id = $3
+          -- Group posts where user is a member
+          OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+        )
     )
-    SELECT
+    SELECT DISTINCT ON (post_id)
       *,
       (semantic_similarity * ${1 - keywordWeight}) + (keyword_match * ${keywordWeight}) + (keyword_count * 0.05) as hybrid_score
     FROM ranked_chunks
-    ORDER BY hybrid_score DESC, semantic_similarity DESC
-    LIMIT $2`,
-    [embeddingStr, limit * 3, ...keywordParams]
+    ORDER BY post_id, hybrid_score DESC, semantic_similarity DESC`,
+    [embeddingStr, limit * 3, userId, isAdmin, ...keywordParams]
   );
+
+  // Re-sort by hybrid_score after DISTINCT ON
+  const sortedRows = result.rows.sort((a, b) => b.hybrid_score - a.hybrid_score).slice(0, limit * 3);
 
   // Group by post and return best match per post
   const postResults = new Map();
-  for (const row of result.rows) {
+  for (const row of sortedRows) {
     const existing = postResults.get(row.post_id);
     if (!existing || row.hybrid_score > existing.hybridScore) {
       postResults.set(row.post_id, {
@@ -130,7 +154,8 @@ ${userMessage}
 
 ## Instructions:
 - Answer based on the context above
-- Be concise and direct
+- Provide detailed, helpful explanations
+- Include relevant examples or steps when available in the context
 - Reference document titles when citing sources (e.g., "According to [1] Document Title...")
 - If unsure, acknowledge the limitation`;
 }
@@ -222,11 +247,11 @@ export async function POST({ request, locals }) {
       );
     }
 
-    console.log(`💬 RAG Chat: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}"`);
+    console.log(`💬 RAG Chat: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}" (user: ${locals.user.id}, role: ${locals.user.role})`);
 
-    // Perform hybrid search
-    const contextChunks = await hybridSearch(message, limit, keywordWeight);
-    console.log(`   Found ${contextChunks.length} relevant chunks`);
+    // Perform hybrid search with permission filtering
+    const contextChunks = await hybridSearch(message, locals.user.id, locals.user.role, limit, keywordWeight);
+    console.log(`   Found ${contextChunks.length} relevant chunks (filtered by user permissions)`);
 
     // Build RAG prompt
     const ragPrompt = buildRAGPrompt(message, contextChunks);
@@ -244,7 +269,7 @@ export async function POST({ request, locals }) {
     // Create streaming response
     const generator = generateStream(ragPrompt, {
       temperature: 0.7,
-      maxTokens: 1000
+      maxTokens: 2000
     });
 
     const stream = createSSEStream(generator, sources);

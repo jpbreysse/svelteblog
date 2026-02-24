@@ -10,7 +10,8 @@ const DEFAULT_CATEGORIES = [
   { value: 'personal', label: 'Personal' },
   { value: 'tech', label: 'Technology' },
   { value: 'tutorial', label: 'Tutorial' },
-  { value: 'politics', label: 'Politics' }
+  { value: 'politics', label: 'Politics' },
+  { value: 'imported', label: 'Imported Document' }
 ];
 
 /**

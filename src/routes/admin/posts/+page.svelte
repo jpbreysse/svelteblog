@@ -17,6 +17,15 @@
   let showDeleteModal = false;
   let deletingPost = null;
   let bulkDeleting = false;
+
+  // Import from URL states
+  let showImportModal = false;
+  let importUrl = '';
+  let importTitle = '';
+  let importCategory = 'imported';
+  let importing = false;
+  let importError = '';
+  let importSuccess = null;
   
   // Reactive data
   $: posts = data.posts || [];
@@ -169,6 +178,62 @@
   function editPost(post) {
     goto(`/blog?edit=${post.id}`);
   }
+
+  // Import from URL
+  function openImportModal() {
+    importUrl = '';
+    importTitle = '';
+    importCategory = 'imported';
+    importError = '';
+    importSuccess = null;
+    showImportModal = true;
+  }
+
+  async function importFromUrl() {
+    if (!importUrl.trim()) {
+      importError = 'URL is required';
+      return;
+    }
+
+    importing = true;
+    importError = '';
+    importSuccess = null;
+
+    try {
+      const response = await fetch('/api/posts/import-url', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: importUrl,
+          title: importTitle || undefined,
+          category: importCategory,
+          vectorize: true
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        importSuccess = result;
+        await invalidateAll();
+      } else {
+        importError = result.error || 'Import failed';
+      }
+    } catch (error) {
+      console.error('Import error:', error);
+      importError = error.message || 'Failed to import document';
+    } finally {
+      importing = false;
+    }
+  }
+
+  function closeImportModal() {
+    showImportModal = false;
+    importUrl = '';
+    importTitle = '';
+    importError = '';
+    importSuccess = null;
+  }
 </script>
 
 <svelte:head>
@@ -177,7 +242,12 @@
 
 <div class="admin-container">
   <div class="page-header">
-    <h1>📝 Posts Management</h1>
+    <div class="header-left">
+      <h1>📝 Posts Management</h1>
+      <button class="btn btn-primary import-btn" on:click={openImportModal}>
+        📥 Import from URL
+      </button>
+    </div>
     <a href="/admin" class="back-link">← Back to Admin</a>
   </div>
   
@@ -389,6 +459,111 @@
 </div>
 
 <!-- Delete Confirmation Modal -->
+<!-- Import from URL Modal -->
+{#if showImportModal}
+  <div class="modal-overlay" on:click={closeImportModal}>
+    <div class="modal import-modal" on:click|stopPropagation>
+      <div class="modal-header">
+        <h3>📥 Import Document from URL</h3>
+        <button class="modal-close" on:click={closeImportModal}>×</button>
+      </div>
+
+      <div class="modal-body">
+        {#if importSuccess}
+          <div class="success-message">
+            <div class="success-icon">✅</div>
+            <h4>Import Successful!</h4>
+            <p>Created post: <strong>{importSuccess.post.title}</strong></p>
+            <div class="import-stats">
+              <span>📄 {importSuccess.stats.sourceType.toUpperCase()}</span>
+              <span>📝 {importSuccess.stats.textLength.toLocaleString()} chars</span>
+              {#if importSuccess.stats.chunkCount}
+                <span>🧩 {importSuccess.stats.chunkCount} chunks</span>
+              {/if}
+            </div>
+            <div class="success-actions">
+              <a href="/blog/{importSuccess.post.slug}" class="btn btn-primary" target="_blank">
+                View Post
+              </a>
+              <button class="btn btn-secondary" on:click={closeImportModal}>
+                Close
+              </button>
+            </div>
+          </div>
+        {:else}
+          <div class="form-group">
+            <label for="import-url">Document URL</label>
+            <input
+              id="import-url"
+              type="url"
+              bind:value={importUrl}
+              placeholder="https://example.com/document.pdf"
+              disabled={importing}
+            />
+            <div class="field-hint">Supports: PDF, DOCX, PPTX, TXT, HTML (max 50MB)</div>
+          </div>
+
+          <div class="form-group">
+            <label for="import-title">Title (optional)</label>
+            <input
+              id="import-title"
+              type="text"
+              bind:value={importTitle}
+              placeholder="Leave empty to use filename"
+              disabled={importing}
+            />
+          </div>
+
+          <div class="form-group">
+            <label for="import-category">Category</label>
+            <select id="import-category" bind:value={importCategory} disabled={importing}>
+              <option value="imported">Imported</option>
+              <option value="reports">Reports</option>
+              <option value="documentation">Documentation</option>
+              <option value="articles">Articles</option>
+              {#each categories as cat}
+                {#if !['imported', 'reports', 'documentation', 'articles'].includes(cat.category)}
+                  <option value={cat.category}>{cat.category}</option>
+                {/if}
+              {/each}
+            </select>
+          </div>
+
+          {#if importError}
+            <div class="error-message">
+              ❌ {importError}
+            </div>
+          {/if}
+        {/if}
+      </div>
+
+      {#if !importSuccess}
+        <div class="modal-actions">
+          <button
+            class="btn btn-primary"
+            on:click={importFromUrl}
+            disabled={importing || !importUrl.trim()}
+          >
+            {#if importing}
+              ⏳ Importing...
+            {:else}
+              📥 Import & Vectorize
+            {/if}
+          </button>
+          <button
+            class="btn btn-secondary"
+            on:click={closeImportModal}
+            disabled={importing}
+          >
+            Cancel
+          </button>
+        </div>
+      {/if}
+    </div>
+  </div>
+{/if}
+
+<!-- Delete Confirmation Modal -->
 {#if showDeleteModal && deletingPost}
   <div class="modal-overlay" on:click={() => showDeleteModal = false}>
     <div class="modal delete-modal" on:click|stopPropagation>
@@ -439,10 +614,20 @@
     align-items: center;
     margin-bottom: 2rem;
   }
-  
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+  }
+
   .page-header h1 {
     color: #1f2937;
     margin: 0;
+  }
+
+  .import-btn {
+    white-space: nowrap;
   }
   
   .back-link {
@@ -777,10 +962,104 @@
   .btn-secondary:hover:not(:disabled) {
     background: #5b6470;
   }
-  
+
+  .btn-primary {
+    background: #2563eb;
+    color: white;
+  }
+
+  .btn-primary:hover:not(:disabled) {
+    background: #1d4ed8;
+  }
+
   .btn:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  /* Import Modal Styles */
+  .import-modal {
+    max-width: 550px;
+  }
+
+  .form-group {
+    margin-bottom: 1.25rem;
+  }
+
+  .form-group label {
+    display: block;
+    font-weight: 500;
+    color: #374151;
+    margin-bottom: 0.5rem;
+  }
+
+  .form-group input,
+  .form-group select {
+    width: 100%;
+    padding: 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 1rem;
+    box-sizing: border-box;
+  }
+
+  .form-group input:focus,
+  .form-group select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  }
+
+  .form-group input:disabled,
+  .form-group select:disabled {
+    background: #f3f4f6;
+    color: #9ca3af;
+  }
+
+  .field-hint {
+    font-size: 0.75rem;
+    color: #6b7280;
+    margin-top: 0.375rem;
+  }
+
+  .error-message {
+    background: #fef2f2;
+    border: 1px solid #fecaca;
+    color: #991b1b;
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    margin-top: 1rem;
+  }
+
+  .success-message {
+    text-align: center;
+    padding: 1rem 0;
+  }
+
+  .success-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+  }
+
+  .success-message h4 {
+    color: #065f46;
+    margin: 0 0 0.5rem;
+  }
+
+  .import-stats {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+    margin: 1rem 0;
+    color: #6b7280;
+    font-size: 0.875rem;
+  }
+
+  .success-actions {
+    display: flex;
+    gap: 1rem;
+    justify-content: center;
+    margin-top: 1.5rem;
   }
   
   /* Modal */

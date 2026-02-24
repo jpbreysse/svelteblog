@@ -12,7 +12,15 @@ import { json } from '@sveltejs/kit';
 import { pool } from '$lib/db.js';
 import { generateEmbedding } from '$lib/server/embeddings.js';
 
-export async function GET({ url }) {
+export async function GET({ url, locals }) {
+  // Require authentication
+  if (!locals.user) {
+    return json({
+      success: false,
+      error: 'Authentication required'
+    }, { status: 401 });
+  }
+
   const query = url.searchParams.get('q');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
   const keywordWeight = Math.min(Math.max(parseFloat(url.searchParams.get('keywordWeight') || '0.3'), 0), 1);
@@ -32,7 +40,7 @@ export async function GET({ url }) {
   }
 
   try {
-    console.log(`🔍 Hybrid search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    console.log(`🔍 Hybrid search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}" (user: ${locals.user.id})`);
 
     // Generate embedding for semantic search
     const queryEmbedding = await generateEmbedding(query);
@@ -48,10 +56,13 @@ export async function GET({ url }) {
     console.log(`   Keywords: ${keywords.join(', ')}`);
 
     // Build keyword matching SQL (case-insensitive)
-    const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 3}`);
+    // Params: $1=embedding, $2=limit, $3=userId, $4=isAdmin, $5+=keywords
+    const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 5}`);
     const keywordParams = keywords.map(k => `%${k}%`);
 
-    // Hybrid query: semantic similarity + keyword bonus
+    const isAdmin = locals.user.role === 'admin';
+
+    // Hybrid query: semantic similarity + keyword bonus + permission filtering
     const result = await pool.query(
       `WITH ranked_chunks AS (
         SELECT
@@ -71,27 +82,41 @@ export async function GET({ url }) {
             ELSE 0.0
           END as keyword_match,
           (
-            ${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 3} THEN 1 ELSE 0 END`).join(' + ') || '0'}
+            ${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 5} THEN 1 ELSE 0 END`).join(' + ') || '0'}
           ) as keyword_count
         FROM document_chunks dc
         JOIN posts p ON dc.post_id = p.id
+        LEFT JOIN post_read_groups prg ON p.id = prg.post_id
+        LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $3
         WHERE p.published = true
+          AND (
+            -- Admins can see everything
+            $4 = true
+            -- Public posts
+            OR p.visibility = 'public'
+            -- User's own posts
+            OR p.author_id = $3
+            -- Group posts where user is a member
+            OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+          )
       )
-      SELECT
+      SELECT DISTINCT ON (chunk_id)
         *,
         (semantic_similarity * ${1 - keywordWeight}) + (keyword_match * ${keywordWeight}) + (keyword_count * 0.05) as hybrid_score
       FROM ranked_chunks
-      ORDER BY hybrid_score DESC, semantic_similarity DESC
-      LIMIT $2`,
-      [embeddingStr, limit * 3, ...keywordParams]  // Get more results to group by post
+      ORDER BY chunk_id, hybrid_score DESC`,
+      [embeddingStr, limit * 3, locals.user.id, isAdmin, ...keywordParams]
     );
 
-    console.log(`   Found ${result.rows.length} chunks`);
+    // Re-sort by hybrid score after DISTINCT ON
+    const sortedRows = result.rows.sort((a, b) => b.hybrid_score - a.hybrid_score);
+
+    console.log(`   Found ${sortedRows.length} chunks (filtered by permissions)`);
 
     // Group results by post and take the best match per post
     const postResults = new Map();
 
-    for (const row of result.rows) {
+    for (const row of sortedRows) {
       const existing = postResults.get(row.post_id);
 
       if (!existing || row.hybrid_score > existing.hybridScore) {
@@ -125,7 +150,7 @@ export async function GET({ url }) {
       keywords,
       keywordWeight,
       results: posts,
-      totalChunks: result.rows.length,
+      totalChunks: sortedRows.length,
       uniquePosts: posts.length
     });
 

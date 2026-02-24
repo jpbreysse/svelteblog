@@ -1381,14 +1381,16 @@ export const chunksDB = {
    * @param {number} limit - Maximum number of results
    * @returns {Promise<Array>} Similar chunks with post info
    */
-  async searchSimilar(queryEmbedding, limit = 10) {
+  async searchSimilar(queryEmbedding, limit = 10, userId = null, userRole = 'user') {
     // Convert embedding array to pgvector format
     const embeddingStr = '[' + queryEmbedding.join(',') + ']';
 
-    // Fetch all chunks with similarity scores and sort in JavaScript
+    const isAdmin = userRole === 'admin';
+
+    // Fetch all chunks with similarity scores and permission filtering
     // This avoids ivfflat index issues with small datasets
     const result = await pool.query(
-      `SELECT
+      `SELECT DISTINCT ON (dc.id)
          dc.id as chunk_id,
          dc.post_id,
          dc.chunk_index,
@@ -1401,8 +1403,20 @@ export const chunksDB = {
          1 - (dc.embedding <=> $1::vector) as similarity
        FROM document_chunks dc
        JOIN posts p ON dc.post_id = p.id
-       WHERE p.published = true`,
-      [embeddingStr]
+       LEFT JOIN post_read_groups prg ON p.id = prg.post_id
+       LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
+       WHERE p.published = true
+         AND (
+           -- Admins can see everything
+           $3 = true
+           -- Public posts
+           OR p.visibility = 'public'
+           -- User's own posts
+           OR p.author_id = $2
+           -- Group posts where user is a member
+           OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+         )`,
+      [embeddingStr, userId, isAdmin]
     );
 
     // Sort by similarity descending and limit
@@ -1410,7 +1424,7 @@ export const chunksDB = {
       .sort((a, b) => b.similarity - a.similarity)
       .slice(0, parseInt(limit));
 
-    console.log(`   Semantic search: ${result.rows.length} total chunks, returning top ${sorted.length}`);
+    console.log(`   Semantic search: ${result.rows.length} total chunks, returning top ${sorted.length} (filtered by permissions)`);
     return sorted;
   },
 

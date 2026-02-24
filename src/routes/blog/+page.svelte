@@ -51,6 +51,7 @@
     let vectorizingPostId = null; // Post currently being vectorized
     let vectorizationStatus = {}; // Map of postId -> { isVectorized, chunkCount }
     let uploadingPostId = null; // Post currently uploading file for
+    let extractingUrl = false; // Loading state for URL content extraction
 
     // Semantic search state
     let searchMode = 'keyword'; // 'keyword', 'semantic', 'hybrid'
@@ -716,6 +717,56 @@
       input.click();
     }
 
+    // Fetch content from external URL (for imported documents)
+    async function fetchUrlContent() {
+      if (!editingPost?.source_url?.trim()) {
+        alert('Please enter a URL first');
+        return;
+      }
+
+      extractingUrl = true;
+
+      try {
+        const response = await fetch('/api/posts/extract-url', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: editingPost.source_url })
+        });
+
+        const result = await response.json();
+
+        if (!result.success) {
+          throw new Error(result.error);
+        }
+
+        // Update title if empty
+        if (!editingPost.title?.trim() && result.title) {
+          editingPost.title = result.title;
+        }
+
+        // Switch to 'imported' category so vectorization uses post content (not URL)
+        editingPost.category = 'imported';
+
+        // Convert text to HTML paragraphs and insert into editor
+        const paragraphs = result.content
+          .split(/\n\n+/)
+          .filter(p => p.trim())
+          .map(p => `<p>${p.replace(/\n/g, '<br>')}</p>`)
+          .join('');
+
+        editor?.chain().focus().setContent(paragraphs).run();
+
+        console.log(`✅ Imported ${result.stats.textLength} characters from ${result.sourceType.toUpperCase()}`);
+        alert(`Imported ${result.stats.textLength.toLocaleString()} characters from ${result.sourceType.toUpperCase()}. Category set to "Imported Document".`);
+
+      } catch (error) {
+        console.error('URL extraction error:', error);
+        alert('Failed to fetch content: ' + error.message);
+      } finally {
+        extractingUrl = false;
+      }
+    }
+
     // Keep old PDF import for backward compatibility (client-side)
     async function importPdfClientSide() {
       const input = document.createElement('input');
@@ -1309,12 +1360,40 @@
                 <div class="input-group source-url-group">
                   <input
                     bind:value={editingPost.source_url}
-                    placeholder="External document URL (HTML, PDF, Word)"
+                    placeholder="External URL (HTML pages only)"
                     class="source-url-input"
                     type="url"
                     disabled={loading}
                   />
-                  <div class="source-url-label">External URL for vectorization</div>
+                  <div class="source-url-label">External URL for vectorization (HTML only, not PDF)</div>
+                </div>
+              {/if}
+
+              {#if editingPost.category === 'imported'}
+                <div class="input-group source-url-group imported-group">
+                  <div class="source-url-row">
+                    <input
+                      bind:value={editingPost.source_url}
+                      placeholder="Document URL (PDF, Word, PowerPoint, HTML)"
+                      class="source-url-input"
+                      type="url"
+                      disabled={loading || extractingUrl}
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-secondary fetch-url-btn"
+                      on:click={fetchUrlContent}
+                      disabled={loading || extractingUrl || !editingPost.source_url?.trim()}
+                      title="Fetch and import content from URL"
+                    >
+                      {#if extractingUrl}
+                        ⏳ Fetching...
+                      {:else}
+                        📥 Fetch
+                      {/if}
+                    </button>
+                  </div>
+                  <div class="source-url-label">Enter URL and click Fetch to import content</div>
                 </div>
               {/if}
             </div>
@@ -2542,7 +2621,28 @@
     .source-url-label {
       color: #92400e;
     }
-    
+
+    .source-url-row {
+      display: flex;
+      gap: 0.5rem;
+      align-items: stretch;
+    }
+
+    .source-url-row .source-url-input {
+      flex: 1;
+    }
+
+    .fetch-url-btn {
+      white-space: nowrap;
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+    }
+
+    .fetch-url-btn:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .tags-input.error {
       border-color: #dc2626;
     }

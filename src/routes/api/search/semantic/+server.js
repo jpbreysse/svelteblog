@@ -11,7 +11,15 @@ import { json } from '@sveltejs/kit';
 import { chunksDB } from '$lib/db.js';
 import { generateEmbedding } from '$lib/server/embeddings.js';
 
-export async function GET({ url }) {
+export async function GET({ url, locals }) {
+  // Require authentication
+  if (!locals.user) {
+    return json({
+      success: false,
+      error: 'Authentication required'
+    }, { status: 401 });
+  }
+
   const query = url.searchParams.get('q');
   const limit = Math.min(parseInt(url.searchParams.get('limit') || '10'), 50);
 
@@ -30,14 +38,14 @@ export async function GET({ url }) {
   }
 
   try {
-    console.log(`🔍 Semantic search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    console.log(`🔍 Semantic search: "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}" (user: ${locals.user.id})`);
 
     // Generate embedding for the query
     const queryEmbedding = await generateEmbedding(query);
     console.log(`   Embedding generated, length: ${queryEmbedding.length}, first 3: ${queryEmbedding.slice(0,3).join(', ')}`);
 
-    // Search for similar chunks
-    const results = await chunksDB.searchSimilar(queryEmbedding, limit);
+    // Search for similar chunks with permission filtering
+    const results = await chunksDB.searchSimilar(queryEmbedding, limit, locals.user.id, locals.user.role);
 
     console.log(`   Found ${results.length} results`);
 
@@ -92,7 +100,15 @@ export async function GET({ url }) {
  * - query: Search query (required)
  * - limit: Maximum results (default: 10, max: 50)
  */
-export async function POST({ request }) {
+export async function POST({ request, locals }) {
+  // Require authentication
+  if (!locals.user) {
+    return json({
+      success: false,
+      error: 'Authentication required'
+    }, { status: 401 });
+  }
+
   try {
     const body = await request.json();
     const query = body.query;
@@ -112,13 +128,13 @@ export async function POST({ request }) {
       }, { status: 400 });
     }
 
-    console.log(`🔍 Semantic search (POST): "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}"`);
+    console.log(`🔍 Semantic search (POST): "${query.substring(0, 50)}${query.length > 50 ? '...' : ''}" (user: ${locals.user.id})`);
 
     // Generate embedding for the query
     const queryEmbedding = await generateEmbedding(query);
 
-    // Search for similar chunks
-    const results = await chunksDB.searchSimilar(queryEmbedding, limit);
+    // Search for similar chunks with permission filtering
+    const results = await chunksDB.searchSimilar(queryEmbedding, limit, locals.user.id, locals.user.role);
 
     console.log(`   Found ${results.length} results`);
 
