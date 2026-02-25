@@ -56,8 +56,8 @@ export async function GET({ url, locals }) {
     console.log(`   Keywords: ${keywords.join(', ')}`);
 
     // Build keyword matching SQL (case-insensitive)
-    // Params: $1=embedding, $2=limit, $3=userId, $4=isAdmin, $5+=keywords
-    const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 5}`);
+    // Params: $1=embedding, $2=userId, $3=isAdmin, $4+=keywords
+    const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 4}`);
     const keywordParams = keywords.map(k => `%${k}%`);
 
     const isAdmin = locals.user.role === 'admin';
@@ -82,20 +82,20 @@ export async function GET({ url, locals }) {
             ELSE 0.0
           END as keyword_match,
           (
-            ${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 5} THEN 1 ELSE 0 END`).join(' + ') || '0'}
+            ${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 4} THEN 1 ELSE 0 END`).join(' + ') || '0'}
           ) as keyword_count
         FROM document_chunks dc
         JOIN posts p ON dc.post_id = p.id
         LEFT JOIN post_read_groups prg ON p.id = prg.post_id
-        LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $3
+        LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
         WHERE p.published = true
           AND (
             -- Admins can see everything
-            $4 = true
+            $3 = true
             -- Public posts
             OR p.visibility = 'public'
             -- User's own posts
-            OR p.author_id = $3
+            OR p.author_id = $2
             -- Group posts where user is a member
             OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
           )
@@ -105,7 +105,7 @@ export async function GET({ url, locals }) {
         (semantic_similarity * ${1 - keywordWeight}) + (keyword_match * ${keywordWeight}) + (keyword_count * 0.05) as hybrid_score
       FROM ranked_chunks
       ORDER BY chunk_id, hybrid_score DESC`,
-      [embeddingStr, limit * 3, locals.user.id, isAdmin, ...keywordParams]
+      [embeddingStr, locals.user.id, isAdmin, ...keywordParams]
     );
 
     // Re-sort by hybrid score after DISTINCT ON

@@ -43,8 +43,8 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
     .split(/\s+/)
     .filter(word => word.length > 2 && !stopWords.has(word));
 
-  // Build SQL - keyword params start at $5 (after embedding, limit, userId, isAdmin)
-  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 5}`);
+  // Build SQL - keyword params start at $4 (after embedding, userId, isAdmin)
+  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 4}`);
   const keywordParams = keywords.map(k => `%${k}%`);
 
   // Permission filtering:
@@ -72,19 +72,19 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
           THEN 1.0
           ELSE 0.0
         END as keyword_match,
-        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 5} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
+        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 4} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
       FROM document_chunks dc
       JOIN posts p ON dc.post_id = p.id
       LEFT JOIN post_read_groups prg ON p.id = prg.post_id
-      LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $3
+      LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
       WHERE p.published = true
         AND (
           -- Admins can see everything
-          $4 = true
+          $3 = true
           -- Public posts
           OR p.visibility = 'public'
           -- User's own posts
-          OR p.author_id = $3
+          OR p.author_id = $2
           -- Group posts where user is a member
           OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
         )
@@ -94,7 +94,7 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
       (semantic_similarity * ${1 - keywordWeight}) + (keyword_match * ${keywordWeight}) + (keyword_count * 0.05) as hybrid_score
     FROM ranked_chunks
     ORDER BY post_id, hybrid_score DESC, semantic_similarity DESC`,
-    [embeddingStr, limit * 3, userId, isAdmin, ...keywordParams]
+    [embeddingStr, userId, isAdmin, ...keywordParams]
   );
 
   // Re-sort by hybrid_score after DISTINCT ON

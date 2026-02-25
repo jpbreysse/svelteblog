@@ -1,83 +1,100 @@
 /**
  * Embedding Service
- * Generates vector embeddings using all-MiniLM-L6-v2 via Transformers.js
+ * Generates vector embeddings using nomic-embed-text-v2-moe via Ollama
  *
- * Model: Xenova/all-MiniLM-L6-v2
- * Output: 384-dimensional normalized vectors
- * Max sequence length: 256 tokens
+ * Model: nomic-embed-text-v2-moe
+ * Output: 768-dimensional normalized vectors
+ * Max sequence length: 8192 tokens
+ * Languages: ~100 (multilingual)
  */
 
-let pipeline = null;
-let embedder = null;
-let isLoading = false;
-let loadPromise = null;
+const OLLAMA_URL = process.env.OLLAMA_URL || 'http://localhost:11434';
+const EMBEDDING_MODEL = process.env.EMBEDDING_MODEL || 'nomic-embed-text-v2-moe';
+
+let modelVerified = false;
 
 /**
- * Initialize the embedding pipeline
- * Lazy loads the model on first use
- * @returns {Promise<Function>}
+ * Verify the embedding model is available in Ollama
+ * @returns {Promise<boolean>}
  */
-async function getEmbedder() {
-  // If already loaded, return it
-  if (embedder) {
-    return embedder;
-  }
+async function verifyModel() {
+  if (modelVerified) return true;
 
-  // If currently loading, wait for it
-  if (isLoading && loadPromise) {
-    return loadPromise;
-  }
+  try {
+    console.log(`🔄 Checking embedding model (${EMBEDDING_MODEL})...`);
 
-  // Start loading
-  isLoading = true;
-  console.log('🔄 Loading embedding model (all-MiniLM-L6-v2)...');
-  console.log('   This may take 10-30 seconds on first run as the model downloads (~90MB)');
-
-  loadPromise = (async () => {
-    try {
-      // Dynamic import of transformers.js
-      const transformers = await import('@xenova/transformers');
-      pipeline = transformers.pipeline;
-
-      // Load the feature extraction pipeline
-      embedder = await pipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
-        // Use quantized model for faster inference
-        quantized: true
-      });
-
-      console.log('✅ Embedding model loaded successfully');
-      return embedder;
-    } catch (error) {
-      console.error('❌ Failed to load embedding model:', error);
-      isLoading = false;
-      loadPromise = null;
-      throw error;
+    const response = await fetch(`${OLLAMA_URL}/api/tags`);
+    if (!response.ok) {
+      throw new Error(`Ollama not responding: ${response.status}`);
     }
-  })();
 
-  return loadPromise;
+    const data = await response.json();
+    const models = data.models || [];
+    const hasModel = models.some(m => m.name.startsWith(EMBEDDING_MODEL));
+
+    if (!hasModel) {
+      console.warn(`⚠️ Model ${EMBEDDING_MODEL} not found. Available models:`, models.map(m => m.name));
+      console.log(`   Run: ollama pull ${EMBEDDING_MODEL}`);
+      return false;
+    }
+
+    console.log(`✅ Embedding model ${EMBEDDING_MODEL} is available`);
+    modelVerified = true;
+    return true;
+  } catch (error) {
+    console.error('❌ Failed to verify embedding model:', error.message);
+    return false;
+  }
 }
 
 /**
  * Generate embedding for a single text
  * @param {string} text - Text to embed
- * @returns {Promise<number[]>} 384-dimensional vector
+ * @returns {Promise<number[]>} 768-dimensional vector
  */
 export async function generateEmbedding(text) {
   if (!text || text.trim().length === 0) {
     throw new Error('Cannot generate embedding for empty text');
   }
 
-  const extractor = await getEmbedder();
+  // Verify model on first call
+  if (!modelVerified) {
+    const available = await verifyModel();
+    if (!available) {
+      throw new Error(`Embedding model ${EMBEDDING_MODEL} not available. Run: ollama pull ${EMBEDDING_MODEL}`);
+    }
+  }
 
-  // Generate embedding with mean pooling and normalization
-  const output = await extractor(text, {
-    pooling: 'mean',
-    normalize: true
-  });
+  try {
+    const response = await fetch(`${OLLAMA_URL}/api/embeddings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model: EMBEDDING_MODEL,
+        prompt: text
+      })
+    });
 
-  // Convert to regular array
-  return Array.from(output.data);
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Ollama embedding failed: ${response.status} - ${errorText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.embedding || !Array.isArray(data.embedding)) {
+      throw new Error('Invalid embedding response from Ollama');
+    }
+
+    return data.embedding;
+  } catch (error) {
+    if (error.code === 'ECONNREFUSED') {
+      throw new Error('Ollama is not running. Start it with: ollama serve');
+    }
+    throw error;
+  }
 }
 
 /**
@@ -85,7 +102,7 @@ export async function generateEmbedding(text) {
  * @param {string[]} texts - Array of texts to embed
  * @param {object} options - Options
  * @param {function} options.onProgress - Progress callback (index, total)
- * @returns {Promise<number[][]>} Array of 384-dimensional vectors
+ * @returns {Promise<number[][]>} Array of 768-dimensional vectors
  */
 export async function generateEmbeddings(texts, options = {}) {
   if (!texts || texts.length === 0) {
@@ -168,20 +185,23 @@ export function findMostSimilar(queryEmbedding, candidates, topK = 5) {
 }
 
 /**
- * Check if the embedding model is loaded
- * @returns {boolean}
+ * Check if the embedding model is available
+ * @returns {Promise<boolean>}
  */
-export function isModelLoaded() {
-  return embedder !== null;
+export async function isModelLoaded() {
+  return verifyModel();
 }
 
 /**
- * Preload the embedding model
- * Call this during app startup to avoid delay on first use
+ * Preload/verify the embedding model
+ * Call this during app startup to check availability
  * @returns {Promise<void>}
  */
 export async function preloadModel() {
-  await getEmbedder();
+  const available = await verifyModel();
+  if (!available) {
+    console.warn('⚠️ Embedding model not available - vectorization will fail');
+  }
 }
 
 /**
@@ -189,5 +209,13 @@ export async function preloadModel() {
  * @returns {number}
  */
 export function getEmbeddingDimension() {
-  return 384; // all-MiniLM-L6-v2 output dimension
+  return 768; // nomic-embed-text-v2-moe output dimension
+}
+
+/**
+ * Get current embedding model name
+ * @returns {string}
+ */
+export function getEmbeddingModel() {
+  return EMBEDDING_MODEL;
 }

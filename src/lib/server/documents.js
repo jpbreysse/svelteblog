@@ -183,6 +183,7 @@ export async function extractTextFromPptx(buffer) {
 
 /**
  * Extract text from post HTML content (for regular posts)
+ * Preserves document structure for better chunking and embeddings
  * @param {string} html - Post HTML content
  * @returns {string}
  */
@@ -191,13 +192,110 @@ export function extractTextFromPostContent(html) {
 
   const $ = cheerio.load(html);
 
-  // Remove any script/style that might be in the content
-  $('script, style').remove();
+  // Remove dangerous/unwanted elements
+  $('script, style, noscript').remove();
+
+  // Preserve image alt text (important for charts, diagrams)
+  $('img[alt]').each((i, el) => {
+    const alt = $(el).attr('alt');
+    if (alt && alt.trim()) {
+      $(el).replaceWith(`[Image: ${alt.trim()}] `);
+    } else {
+      $(el).remove();
+    }
+  });
+
+  // Preserve external link URLs for context
+  $('a[href^="http"]').each((i, el) => {
+    const href = $(el).attr('href');
+    const text = $(el).text().trim();
+    if (text && href) {
+      $(el).replaceWith(`${text} (${href}) `);
+    }
+  });
+
+  // Mark headings with ## prefix for structure
+  $('h1').each((i, el) => {
+    $(el).prepend('\n\n# ');
+    $(el).append('\n');
+  });
+  $('h2').each((i, el) => {
+    $(el).prepend('\n\n## ');
+    $(el).append('\n');
+  });
+  $('h3').each((i, el) => {
+    $(el).prepend('\n\n### ');
+    $(el).append('\n');
+  });
+  $('h4, h5, h6').each((i, el) => {
+    $(el).prepend('\n\n#### ');
+    $(el).append('\n');
+  });
+
+  // Add bullets for list items
+  $('li').each((i, el) => {
+    $(el).prepend('• ');
+    $(el).append('\n');
+  });
+
+  // Add separators for table cells
+  $('th').each((i, el) => {
+    $(el).append(' | ');
+  });
+  $('td').each((i, el) => {
+    $(el).append(' | ');
+  });
+  $('tr').each((i, el) => {
+    $(el).append('\n');
+  });
+
+  // Add newlines for block elements
+  $('p').each((i, el) => {
+    $(el).append('\n\n');
+  });
+  $('div').each((i, el) => {
+    $(el).append('\n');
+  });
+  $('br').each((i, el) => {
+    $(el).replaceWith('\n');
+  });
+  $('blockquote').each((i, el) => {
+    $(el).prepend('\n> ');
+    $(el).append('\n');
+  });
+
+  // Add markers for code blocks
+  $('pre, code').each((i, el) => {
+    $(el).prepend('\n```\n');
+    $(el).append('\n```\n');
+  });
 
   // Get text
   const text = $.text();
 
-  return cleanText(text);
+  return cleanTextPreserveStructure(text);
+}
+
+/**
+ * Clean text while preserving document structure markers
+ * @param {string} text - Raw text with structure markers
+ * @returns {string}
+ */
+function cleanTextPreserveStructure(text) {
+  return text
+    // Normalize line endings
+    .replace(/\r\n/g, '\n')
+    // Replace tabs with spaces
+    .replace(/\t/g, ' ')
+    // Collapse multiple spaces (but not newlines) into single space
+    .replace(/ +/g, ' ')
+    // Collapse more than 3 consecutive newlines into 2
+    .replace(/\n{4,}/g, '\n\n\n')
+    // Remove spaces at start/end of lines
+    .replace(/^ +/gm, '')
+    .replace(/ +$/gm, '')
+    // Remove leading/trailing whitespace
+    .trim();
 }
 
 /**

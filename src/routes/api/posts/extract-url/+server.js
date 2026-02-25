@@ -71,8 +71,13 @@ export async function POST({ request, locals }) {
       response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'ArborSpace/1.0 Document Extractor'
-        }
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/pdf,*/*;q=0.8',
+          'Accept-Language': 'en-US,en;q=0.9,fr;q=0.8',
+          'Cache-Control': 'no-cache',
+          'Pragma': 'no-cache'
+        },
+        redirect: 'follow'
       });
       clearTimeout(timeoutId);
     } catch (fetchError) {
@@ -87,6 +92,20 @@ export async function POST({ request, locals }) {
         success: false,
         error: `Failed to fetch URL: ${fetchError.message}`
       }, { status: 400 });
+    }
+
+    if (response.status === 403) {
+      return json({
+        success: false,
+        error: 'Access denied (403). The server blocks automated downloads. Try downloading the file manually and uploading it instead.'
+      }, { status: 403 });
+    }
+
+    if (response.status === 401) {
+      return json({
+        success: false,
+        error: 'Authentication required (401). This URL requires login. Download the file manually and upload it instead.'
+      }, { status: 401 });
     }
 
     if (!response.ok) {

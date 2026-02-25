@@ -79,6 +79,9 @@
         Posts Management
         <span class="info-badge">{data.postStats?.total || 0} posts</span>
       </a>
+      <a href="/admin/vectorization" class="nav-link vectorization-link">
+        Vectorization
+      </a>
       <a href="/admin/groups" class="nav-link groups-link">
         Groups Management
       </a>
@@ -299,6 +302,14 @@
 
   .nav-link.categories-link:hover {
     background: #0e7490;
+  }
+
+  .nav-link.vectorization-link {
+    background: #ea580c;
+  }
+
+  .nav-link.vectorization-link:hover {
+    background: #c2410c;
   }
 
     .badge {

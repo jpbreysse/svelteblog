@@ -2,9 +2,12 @@
  * Text Chunking Service
  * Splits text into overlapping chunks suitable for embedding
  *
- * all-MiniLM-L6-v2 has a max sequence length of 256 tokens
+ * nomic-embed-text-v2-moe has a max sequence length of 8192 tokens
  * We target ~500 characters per chunk (roughly 100-125 tokens)
  * with 50 character overlap for context continuity
+ *
+ * Note: Chunk size can be increased for better context, but smaller
+ * chunks provide more precise retrieval for RAG applications.
  */
 
 // Configuration

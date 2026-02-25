@@ -355,13 +355,22 @@
       }
     }
     
+    // Editor loading error state
+    let editorLoadError = null;
+
     // Initialize TipTap when editor is shown
     async function initEditor() {
-      if (!editorContainer) return;
+      if (!editorContainer) {
+        console.error('❌ Editor container not found');
+        return;
+      }
+
+      editorLoadError = null;
 
       try {
         // Dynamically load TipTap from CDN
         if (!tiptapLoaded) {
+          console.log('📦 Loading TipTap modules from esm.sh...');
           const modules = await Promise.all([
             import('https://esm.sh/@tiptap/core@2.1.13'),
             import('https://esm.sh/@tiptap/starter-kit@2.1.13'),
@@ -378,6 +387,7 @@
             import('https://esm.sh/@tiptap/extension-text-style@2.1.13'),
             import('https://esm.sh/@tiptap/extension-placeholder@2.1.13'),
           ]);
+          console.log('✅ TipTap modules loaded successfully');
 
           window.TipTapModules = {
             Editor: modules[0].Editor,
@@ -571,7 +581,8 @@
         editorContainer.addEventListener('dragover', (e) => e.preventDefault());
 
       } catch (error) {
-        console.error('Failed to initialize editor:', error);
+        console.error('❌ Failed to initialize editor:', error);
+        editorLoadError = `Failed to load editor: ${error.message}. This may be caused by browser security settings blocking esm.sh CDN. Try: 1) Clear browser cache, 2) Disable enhanced security mode, 3) Try a different browser.`;
       }
     }
 
@@ -1620,7 +1631,15 @@
                 {/if}
               {/if}
 
-              <div bind:this={editorContainer} id="blog-editor" class="tiptap-editor-container" class:has-toolbar={editor}></div>
+              {#if editorLoadError}
+                <div class="editor-error">
+                  <strong>Editor Loading Error</strong>
+                  <p>{editorLoadError}</p>
+                  <button class="btn btn-small" on:click={initEditor}>Retry</button>
+                </div>
+              {:else}
+                <div bind:this={editorContainer} id="blog-editor" class="tiptap-editor-container" class:has-toolbar={editor}></div>
+              {/if}
             </div>
 
             <!-- Validation Messages -->
@@ -2838,6 +2857,28 @@
 
     .table-btn.danger:hover {
       background: #fee2e2;
+    }
+
+    /* Editor Error Message */
+    .editor-error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: 8px;
+      padding: 1.5rem;
+      text-align: center;
+      color: #991b1b;
+    }
+
+    .editor-error strong {
+      display: block;
+      margin-bottom: 0.5rem;
+      font-size: 1.1rem;
+    }
+
+    .editor-error p {
+      margin: 0 0 1rem 0;
+      font-size: 0.9rem;
+      color: #7f1d1d;
     }
 
     /* TipTap Editor Container */
