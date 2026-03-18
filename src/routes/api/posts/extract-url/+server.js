@@ -3,17 +3,18 @@
  * Extract text content from a URL without creating a post
  *
  * Body:
- * - url: URL to the document (PDF, DOCX, PPTX, TXT, HTML)
+ * - url: URL to the document (PDF, DOCX, XLSX, XLS, PPTX, TXT, HTML)
  *
  * Returns:
  * - title: Extracted/derived title
  * - content: Extracted text content
- * - sourceType: Document type (pdf, docx, etc.)
+ * - html: HTML content (for DOCX, XLSX, HTML files)
+ * - sourceType: Document type (pdf, docx, xlsx, etc.)
  * - stats: { fileSize, textLength }
  */
 
 import { json } from '@sveltejs/kit';
-import { extractTextFromPdf, extractTextFromDocx, extractTextFromHtml, extractTextFromPptx } from '$lib/server/documents.js';
+import { extractTextFromPdf, extractTextFromDocx, extractHtmlFromDocx, extractTextFromHtml, extractTextFromPptx, extractTextFromXlsx, extractHtmlFromXlsx } from '$lib/server/documents.js';
 
 // Max file size: 50MB
 const MAX_FILE_SIZE = 50 * 1024 * 1024;
@@ -135,6 +136,10 @@ export async function POST({ request, locals }) {
       sourceType = 'docx';
     } else if (urlPath.endsWith('.pptx') || contentType.includes('officedocument.presentationml')) {
       sourceType = 'pptx';
+    } else if (urlPath.endsWith('.xlsx') || contentType.includes('officedocument.spreadsheetml')) {
+      sourceType = 'xlsx';
+    } else if (urlPath.endsWith('.xls') || contentType.includes('vnd.ms-excel')) {
+      sourceType = 'xlsx';
     } else if (urlPath.endsWith('.txt') || contentType.includes('text/plain')) {
       sourceType = 'txt';
     } else if (urlPath.endsWith('.html') || urlPath.endsWith('.htm') || contentType.includes('text/html')) {
@@ -142,7 +147,7 @@ export async function POST({ request, locals }) {
     } else {
       return json({
         success: false,
-        error: `Unsupported file type. URL must end with .pdf, .docx, .pptx, .txt, or .html (detected: ${contentType})`
+        error: `Unsupported file type. URL must end with .pdf, .docx, .xlsx, .xls, .pptx, .txt, or .html (detected: ${contentType})`
       }, { status: 400 });
     }
 
@@ -166,22 +171,40 @@ export async function POST({ request, locals }) {
       }, { status: 400 });
     }
 
-    // Extract text
+    // Extract text and HTML
     let text = '';
+    let html = '';
     let extractedTitle = derivedTitle;
 
     try {
       if (sourceType === 'pdf') {
         text = await extractTextFromPdf(buffer);
+        // Wrap PDF text in paragraphs for TipTap
+        html = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
       } else if (sourceType === 'docx') {
+        // Extract both plain text and HTML
         text = await extractTextFromDocx(buffer);
+        const htmlResult = await extractHtmlFromDocx(buffer);
+        html = htmlResult.html;
+        if (htmlResult.messages.length > 0) {
+          console.log(`   DOCX conversion warnings: ${htmlResult.messages.map(m => m.message).join(', ')}`);
+        }
       } else if (sourceType === 'pptx') {
         text = await extractTextFromPptx(buffer);
+        html = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
+      } else if (sourceType === 'xlsx') {
+        // Extract both plain text and HTML tables
+        text = await extractTextFromXlsx(buffer);
+        const htmlResult = await extractHtmlFromXlsx(buffer);
+        html = htmlResult.html;
+        console.log(`   Excel: ${htmlResult.sheetCount} sheets`);
       } else if (sourceType === 'txt') {
         text = buffer.toString('utf-8');
+        html = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
       } else if (sourceType === 'html') {
         const htmlResult = extractTextFromHtml(buffer.toString('utf-8'));
         text = htmlResult.text;
+        html = buffer.toString('utf-8'); // Keep original HTML
         // Use HTML title if available
         if (htmlResult.title) {
           extractedTitle = htmlResult.title;
@@ -208,6 +231,7 @@ export async function POST({ request, locals }) {
       success: true,
       title: extractedTitle,
       content: text,
+      html: html || null, // HTML version for TipTap editor
       sourceType,
       stats: {
         fileSize,

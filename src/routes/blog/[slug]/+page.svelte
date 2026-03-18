@@ -63,9 +63,16 @@
       <footer class="post-footer">
         <div class="footer-content">
           <a href="/blog" class="back-link">← Back to Blog</a>
-          <button class="report-link" on:click={openReportModal} title="Report content issue">
-            ⚠️ Report Issue
-          </button>
+          <div class="footer-actions">
+            {#if data.post.chunk_count > 0}
+              <a href="/chat?post={data.post.id}" class="chat-link" title="Chat about this document">
+                💬 Chat About This
+              </a>
+            {/if}
+            <button class="report-link" on:click={openReportModal} title="Report content issue">
+              ⚠️ Report Issue
+            </button>
+          </div>
         </div>
       </footer>
     </article>
@@ -329,6 +336,29 @@
       text-decoration: none;
     }
     
+    .footer-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .chat-link {
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      color: #1d4ed8;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .chat-link:hover {
+      background: #bfdbfe;
+      border-color: #93c5fd;
+      color: #1e40af;
+    }
+
     .report-link {
       background: none;
       border: 1px solid #d1d5db;
@@ -339,7 +369,7 @@
       cursor: pointer;
       transition: all 0.2s;
     }
-    
+
     .report-link:hover {
       background: #fee2e2;
       border-color: #fca5a5;
@@ -375,9 +405,13 @@
         align-items: stretch;
       }
 
-      .back-link, .report-link {
+      .back-link, .report-link, .chat-link {
         text-align: center;
         justify-content: center;
+      }
+
+      .footer-actions {
+        flex-wrap: wrap;
       }
     }
 

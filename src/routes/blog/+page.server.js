@@ -40,13 +40,16 @@ export async function load({ url, locals }) {
     const searchQuery = url.searchParams.get('search') || '';
     const categoryFilter = url.searchParams.get('category') || '';
     const authorFilter = url.searchParams.get('author') || '';
+    const tagFilter = url.searchParams.get('tag') || '';
 
     // Load posts with search/filter
-    // ✅ FIXED: Added await to all blogDB calls
+    // Priority: author > tag > search > category > all
     let posts = [];
     if (authorFilter) {
-      // Filter by author first (new priority)
       posts = await blogDB.getPostsByUser(parseInt(authorFilter));
+    } else if (tagFilter) {
+      posts = await blogDB.getPostsByTag(tagFilter);
+      console.log(`🏷️ Filtering by tag: "${tagFilter}"`);
     } else if (searchQuery) {
       posts = await blogDB.searchPosts(searchQuery, categoryFilter || null);
     } else if (categoryFilter) {
@@ -69,10 +72,10 @@ export async function load({ url, locals }) {
 
     console.log('📄 Posts after permission filter:', filteredPosts.length, '/', posts.length);
 
-    // Load categories, authors, and stats
-    // ✅ FIXED: Added await
+    // Load categories, authors, tags, and stats
     const categories = await blogDB.getCategories();
     const authors = await blogDB.getAuthors();
+    const tags = await blogDB.getTags();
     const stats = await blogDB.getStats();
 
     // Load paths for folder selection
@@ -97,12 +100,14 @@ export async function load({ url, locals }) {
       posts: filteredPosts,
       categories,
       authors,
+      tags,
       stats,
       paths,
       availableCategories,
       searchQuery,
       categoryFilter,
       authorFilter,
+      tagFilter,
       editPost
     };
   } catch (error) {
@@ -112,12 +117,14 @@ export async function load({ url, locals }) {
       posts: [],
       categories: [],
       authors: [],
+      tags: [],
       stats: { published_posts: 0, total_posts: 0 },
       paths: [],
       availableCategories: getDefaultCategories(),
       searchQuery: '',
       categoryFilter: '',
       authorFilter: '',
+      tagFilter: '',
       editPost: null
     };
   }

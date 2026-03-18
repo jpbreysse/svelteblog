@@ -3,17 +3,17 @@
  * Import a document from URL, create post, and vectorize
  *
  * Body:
- * - url: URL to the document (PDF, DOCX, etc.)
+ * - url: URL to the document (PDF, DOCX, XLSX, etc.)
  * - title: Post title (optional, defaults to filename)
  * - category: Post category (optional, defaults to 'imported')
  * - vectorize: Whether to vectorize (default: true)
  *
- * Supports: PDF, DOCX, PPTX, TXT, HTML
+ * Supports: PDF, DOCX, XLSX, XLS, PPTX, TXT, HTML
  */
 
 import { json } from '@sveltejs/kit';
 import { blogDB, chunksDB } from '$lib/db.js';
-import { extractTextFromPdf, extractTextFromDocx, extractTextFromHtml, extractTextFromPptx } from '$lib/server/documents.js';
+import { extractTextFromPdf, extractTextFromDocx, extractHtmlFromDocx, extractTextFromHtml, extractTextFromPptx, extractTextFromXlsx, extractHtmlFromXlsx } from '$lib/server/documents.js';
 import { chunkText, getChunkStats } from '$lib/server/chunker.js';
 import { generateEmbeddings } from '$lib/server/embeddings.js';
 
@@ -142,6 +142,10 @@ export async function POST({ request, locals }) {
       sourceType = 'docx';
     } else if (urlPath.endsWith('.pptx') || contentType.includes('officedocument.presentationml')) {
       sourceType = 'pptx';
+    } else if (urlPath.endsWith('.xlsx') || contentType.includes('officedocument.spreadsheetml')) {
+      sourceType = 'xlsx';
+    } else if (urlPath.endsWith('.xls') || contentType.includes('vnd.ms-excel')) {
+      sourceType = 'xlsx';
     } else if (urlPath.endsWith('.txt') || contentType.includes('text/plain')) {
       sourceType = 'txt';
     } else if (urlPath.endsWith('.html') || urlPath.endsWith('.htm') || contentType.includes('text/html')) {
@@ -149,7 +153,7 @@ export async function POST({ request, locals }) {
     } else {
       return json({
         success: false,
-        error: `Unsupported file type. URL must end with .pdf, .docx, .pptx, .txt, or .html (detected: ${contentType})`
+        error: `Unsupported file type. URL must end with .pdf, .docx, .xlsx, .xls, .pptx, .txt, or .html (detected: ${contentType})`
       }, { status: 400 });
     }
 
@@ -173,20 +177,38 @@ export async function POST({ request, locals }) {
       }, { status: 400 });
     }
 
-    // Extract text
+    // Extract text and HTML
     let text = '';
+    let postContent = ''; // HTML for TipTap editor
     try {
       if (sourceType === 'pdf') {
         text = await extractTextFromPdf(buffer);
+        // Wrap PDF text in paragraphs for TipTap
+        postContent = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
       } else if (sourceType === 'docx') {
+        // Extract both plain text (for vectorization) and HTML (for TipTap)
         text = await extractTextFromDocx(buffer);
+        const htmlResult = await extractHtmlFromDocx(buffer);
+        postContent = htmlResult.html;
+        if (htmlResult.messages.length > 0) {
+          console.log(`   DOCX conversion warnings: ${htmlResult.messages.map(m => m.message).join(', ')}`);
+        }
       } else if (sourceType === 'pptx') {
         text = await extractTextFromPptx(buffer);
+        postContent = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
+      } else if (sourceType === 'xlsx') {
+        // Extract both plain text (for vectorization) and HTML tables (for TipTap)
+        text = await extractTextFromXlsx(buffer);
+        const htmlResult = await extractHtmlFromXlsx(buffer);
+        postContent = htmlResult.html;
+        console.log(`   Excel: ${htmlResult.sheetCount} sheets`);
       } else if (sourceType === 'txt') {
         text = buffer.toString('utf-8');
+        postContent = text.split(/\n\n+/).map(p => `<p>${p.trim()}</p>`).join('');
       } else if (sourceType === 'html') {
         const htmlResult = extractTextFromHtml(buffer.toString('utf-8'));
         text = htmlResult.text;
+        postContent = buffer.toString('utf-8'); // Keep original HTML
       }
     } catch (extractError) {
       console.error('❌ Text extraction failed:', extractError);
@@ -205,11 +227,11 @@ export async function POST({ request, locals }) {
       }, { status: 400 });
     }
 
-    // Create the post
+    // Create the post with HTML content for TipTap
     console.log('📝 Creating post...');
     const postResult = await blogDB.createPost({
       title: postTitle,
-      content: text.substring(0, 50000), // Limit content stored in post
+      content: postContent.substring(0, 100000), // HTML content for TipTap
       category: category,
       visibility: 'private',
       source_url: url,

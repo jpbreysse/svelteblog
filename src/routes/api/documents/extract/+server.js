@@ -2,12 +2,12 @@
  * POST /api/documents/extract
  * Extract text from an uploaded document file
  *
- * Accepts: PDF, Word (.docx), Text (.txt), HTML (.html)
+ * Accepts: PDF, Word (.docx), Excel (.xlsx, .xls), PowerPoint (.pptx), Text (.txt), HTML (.html)
  * Returns: Extracted text content
  */
 
 import { json } from '@sveltejs/kit';
-import { extractTextFromPdf, extractTextFromDocx, extractTextFromHtml, extractTextFromPptx } from '$lib/server/documents.js';
+import { extractTextFromPdf, extractTextFromDocx, extractHtmlFromDocx, extractTextFromHtml, extractTextFromPptx, extractTextFromXlsx, extractHtmlFromXlsx } from '$lib/server/documents.js';
 
 // Max file size: 20MB
 const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -44,6 +44,10 @@ export async function POST({ request }) {
       fileType = 'docx';
     } else if (fileName.endsWith('.pptx') || mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
       fileType = 'pptx';
+    } else if (fileName.endsWith('.xlsx') || mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      fileType = 'xlsx';
+    } else if (fileName.endsWith('.xls') || mimeType === 'application/vnd.ms-excel') {
+      fileType = 'xlsx';
     } else if (fileName.endsWith('.doc') || mimeType === 'application/msword') {
       return json({
         success: false,
@@ -61,7 +65,7 @@ export async function POST({ request }) {
     } else {
       return json({
         success: false,
-        error: 'Unsupported file type. Supported: PDF, DOCX, PPTX, TXT, HTML'
+        error: 'Unsupported file type. Supported: PDF, DOCX, XLSX, XLS, PPTX, TXT, HTML'
       }, { status: 400 });
     }
 
@@ -73,21 +77,35 @@ export async function POST({ request }) {
 
     // Extract text based on file type
     let text = '';
+    let html = '';
     let title = '';
 
     try {
       if (fileType === 'pdf') {
         text = await extractTextFromPdf(buffer);
       } else if (fileType === 'docx') {
+        // Extract both plain text (for preview) and HTML (for TipTap editor)
         text = await extractTextFromDocx(buffer);
+        const htmlResult = await extractHtmlFromDocx(buffer);
+        html = htmlResult.html;
+        if (htmlResult.messages.length > 0) {
+          console.log(`   DOCX conversion warnings: ${htmlResult.messages.map(m => m.message).join(', ')}`);
+        }
       } else if (fileType === 'pptx') {
         text = await extractTextFromPptx(buffer);
+      } else if (fileType === 'xlsx') {
+        // Extract both plain text and HTML table for TipTap editor
+        text = await extractTextFromXlsx(buffer);
+        const htmlResult = await extractHtmlFromXlsx(buffer);
+        html = htmlResult.html;
+        console.log(`   Excel: ${htmlResult.sheetCount} sheets`);
       } else if (fileType === 'txt') {
         text = buffer.toString('utf-8');
       } else if (fileType === 'html') {
         const htmlResult = extractTextFromHtml(buffer.toString('utf-8'));
         text = htmlResult.text;
         title = htmlResult.title;
+        html = buffer.toString('utf-8'); // Keep original HTML
       }
     } catch (extractError) {
       console.error('❌ Text extraction failed:', extractError);
@@ -112,6 +130,7 @@ export async function POST({ request }) {
     return json({
       success: true,
       text,
+      html: html || null, // HTML version for TipTap (DOCX, HTML files)
       title: title || file.name.replace(/\.[^/.]+$/, ''),
       fileType,
       fileName: file.name,

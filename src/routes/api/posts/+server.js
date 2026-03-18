@@ -18,6 +18,7 @@ export async function GET({ url, locals }) {
       const result = await pool.query(`
         SELECT p.id, p.title, p.excerpt, p.category, p.slug,
           p.created_at, p.updated_at, p.published, p.read_time,
+          p.source_url, p.source_type,
           u.id as author_id, u.display_name as author,
           array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
         FROM posts p

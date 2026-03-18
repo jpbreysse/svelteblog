@@ -2,13 +2,13 @@
  * POST /api/posts/[id]/upload-vectorize
  * Upload a document file and vectorize it for the post
  *
- * Accepts: PDF, Word (.docx), Text (.txt), HTML (.html)
+ * Accepts: PDF, Word (.docx), Excel (.xlsx, .xls), PowerPoint (.pptx), Text (.txt), HTML (.html)
  */
 
 import { json } from '@sveltejs/kit';
 import { blogDB, chunksDB } from '$lib/db.js';
 import { canWritePost } from '$lib/server/permissions.js';
-import { extractTextFromPdf, extractTextFromDocx, extractTextFromHtml, extractTextFromPptx } from '$lib/server/documents.js';
+import { extractTextFromPdf, extractTextFromDocx, extractTextFromHtml, extractTextFromPptx, extractTextFromXlsx } from '$lib/server/documents.js';
 import { chunkText, getChunkStats } from '$lib/server/chunker.js';
 import { generateEmbeddings } from '$lib/server/embeddings.js';
 
@@ -82,6 +82,10 @@ export async function POST({ params, request, locals }) {
       sourceType = 'docx';
     } else if (fileName.endsWith('.pptx') || mimeType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
       sourceType = 'pptx';
+    } else if (fileName.endsWith('.xlsx') || mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      sourceType = 'xlsx';
+    } else if (fileName.endsWith('.xls') || mimeType === 'application/vnd.ms-excel') {
+      sourceType = 'xlsx';
     } else if (fileName.endsWith('.doc') || mimeType === 'application/msword') {
       return json({
         success: false,
@@ -99,7 +103,7 @@ export async function POST({ params, request, locals }) {
     } else {
       return json({
         success: false,
-        error: 'Unsupported file type. Supported: PDF, DOCX, PPTX, TXT, HTML'
+        error: 'Unsupported file type. Supported: PDF, DOCX, XLSX, XLS, PPTX, TXT, HTML'
       }, { status: 400 });
     }
 
@@ -119,6 +123,8 @@ export async function POST({ params, request, locals }) {
         text = await extractTextFromDocx(buffer);
       } else if (sourceType === 'pptx') {
         text = await extractTextFromPptx(buffer);
+      } else if (sourceType === 'xlsx') {
+        text = await extractTextFromXlsx(buffer);
       } else if (sourceType === 'txt') {
         text = buffer.toString('utf-8');
       } else if (sourceType === 'html') {

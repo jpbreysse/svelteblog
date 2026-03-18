@@ -438,6 +438,30 @@ export const blogDB = {
   },
 
   /**
+   * Get posts by tag
+   * @param {string} tagName - Tag name
+   * @returns {Promise<Array>} Posts with this tag
+   */
+  async getPostsByTag(tagName) {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
+        p.created_at, u.id as author_id, u.display_name as author,
+        array_agg(DISTINCT t2.name) FILTER (WHERE t2.id IS NOT NULL) as tags
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      INNER JOIN post_tags pt ON p.id = pt.post_id
+      INNER JOIN tags t ON pt.tag_id = t.id
+      LEFT JOIN post_tags pt2 ON p.id = pt2.post_id
+      LEFT JOIN tags t2 ON pt2.tag_id = t2.id
+      WHERE t.name = $1 AND p.published = true
+      GROUP BY p.id, u.id
+      ORDER BY p.created_at DESC
+    `, [tagName]);
+    return result.rows;
+  },
+
+  /**
    * Get all categories
    * @returns {Promise<Array>} Distinct categories
    */
@@ -458,11 +482,11 @@ export const blogDB = {
    */
   async getTags() {
     const result = await pool.query(`
-      SELECT t.id, t.name, COUNT(pt.post_id) as usage_count
+      SELECT t.id, t.name, COUNT(pt.post_id) as post_count
       FROM tags t
       LEFT JOIN post_tags pt ON t.id = pt.tag_id
       GROUP BY t.id, t.name
-      ORDER BY usage_count DESC, t.name ASC
+      ORDER BY post_count DESC, t.name ASC
     `);
     return result.rows;
   },

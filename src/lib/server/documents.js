@@ -4,6 +4,7 @@
  * - HTML web pages
  * - PDF files
  * - Word documents (.docx)
+ * - Excel spreadsheets (.xlsx, .xls)
  */
 
 import * as cheerio from 'cheerio';
@@ -12,12 +13,13 @@ import * as cheerio from 'cheerio';
 let mammoth = null;
 let pdfParse = null;
 let officeParser = null;
+let XLSX = null;
 
 /**
  * Detect document type from URL or content-type
  * @param {string} url - The URL to analyze
  * @param {string} contentType - Optional content-type header
- * @returns {'html' | 'pdf' | 'docx' | 'pptx' | 'unknown'}
+ * @returns {'html' | 'pdf' | 'docx' | 'pptx' | 'xlsx' | 'unknown'}
  */
 export function detectDocumentType(url, contentType = '') {
   const lowerUrl = url.toLowerCase();
@@ -27,8 +29,10 @@ export function detectDocumentType(url, contentType = '') {
   if (lowerContentType.includes('application/pdf')) return 'pdf';
   if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.wordprocessingml')) return 'docx';
   if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.presentationml')) return 'pptx';
+  if (lowerContentType.includes('application/vnd.openxmlformats-officedocument.spreadsheetml')) return 'xlsx';
   if (lowerContentType.includes('application/msword')) return 'docx';
   if (lowerContentType.includes('application/vnd.ms-powerpoint')) return 'pptx';
+  if (lowerContentType.includes('application/vnd.ms-excel')) return 'xlsx';
   if (lowerContentType.includes('text/html')) return 'html';
 
   // Fall back to URL extension
@@ -37,6 +41,8 @@ export function detectDocumentType(url, contentType = '') {
   if (lowerUrl.endsWith('.doc')) return 'docx';
   if (lowerUrl.endsWith('.pptx')) return 'pptx';
   if (lowerUrl.endsWith('.ppt')) return 'pptx';
+  if (lowerUrl.endsWith('.xlsx')) return 'xlsx';
+  if (lowerUrl.endsWith('.xls')) return 'xlsx';
   if (lowerUrl.endsWith('.html') || lowerUrl.endsWith('.htm')) return 'html';
 
   // Default to HTML for web URLs
@@ -93,6 +99,12 @@ export async function fetchAndExtractText(url) {
     case 'pptx':
       const pptxBuffer = await response.arrayBuffer();
       text = await extractTextFromPptx(Buffer.from(pptxBuffer));
+      title = extractTitleFromUrl(url);
+      break;
+
+    case 'xlsx':
+      const xlsxBuffer = await response.arrayBuffer();
+      text = await extractTextFromXlsx(Buffer.from(xlsxBuffer));
       title = extractTitleFromUrl(url);
       break;
 
@@ -163,6 +175,131 @@ export async function extractTextFromDocx(buffer) {
 
   const result = await mammoth.extractRawText({ buffer });
   return result.value;
+}
+
+/**
+ * Extract HTML from Word document buffer (preserves formatting)
+ * @param {Buffer} buffer - DOCX file buffer
+ * @returns {Promise<{html: string, messages: Array}>}
+ */
+export async function extractHtmlFromDocx(buffer) {
+  // Lazy load mammoth
+  if (!mammoth) {
+    mammoth = await import('mammoth');
+  }
+
+  const result = await mammoth.convertToHtml({ buffer }, {
+    // Map Word styles to HTML elements
+    styleMap: [
+      "p[style-name='Heading 1'] => h1:fresh",
+      "p[style-name='Heading 2'] => h2:fresh",
+      "p[style-name='Heading 3'] => h3:fresh",
+      "p[style-name='Title'] => h1:fresh",
+      "p[style-name='Subtitle'] => h2:fresh"
+    ]
+  });
+
+  return {
+    html: result.value,
+    messages: result.messages // Warnings about conversion (e.g., unsupported features)
+  };
+}
+
+/**
+ * Extract text from Excel spreadsheet buffer (includes formulas for RAG)
+ * @param {Buffer} buffer - XLSX/XLS file buffer
+ * @returns {Promise<string>}
+ */
+export async function extractTextFromXlsx(buffer) {
+  // Lazy load xlsx
+  if (!XLSX) {
+    XLSX = await import('xlsx');
+  }
+
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellFormula: true });
+  const textParts = [];
+
+  // Process each sheet
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const sheetText = extractSheetWithFormulas(XLSX, sheet, sheetName);
+    if (sheetText.trim()) {
+      textParts.push(sheetText);
+    }
+  }
+
+  return textParts.join('\n\n');
+}
+
+/**
+ * Extract sheet content with formulas included
+ * @param {object} XLSX - xlsx library
+ * @param {object} sheet - Sheet object
+ * @param {string} sheetName - Name of the sheet
+ * @returns {string}
+ */
+function extractSheetWithFormulas(XLSX, sheet, sheetName) {
+  const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+  const lines = [`[Sheet: ${sheetName}]`];
+  const formulas = [];
+
+  // First pass: collect all formulas
+  for (let row = range.s.r; row <= range.e.r; row++) {
+    for (let col = range.s.c; col <= range.e.c; col++) {
+      const cellAddr = XLSX.utils.encode_cell({ r: row, c: col });
+      const cell = sheet[cellAddr];
+      if (cell && cell.f) {
+        // Cell has a formula
+        const value = cell.v !== undefined ? cell.v : '';
+        formulas.push(`${cellAddr}: ${value} (formula: =${cell.f})`);
+      }
+    }
+  }
+
+  // Get the regular text representation (values only)
+  const text = XLSX.utils.sheet_to_txt(sheet, { blankrows: false });
+  if (text.trim()) {
+    lines.push(text);
+  }
+
+  // Append formulas section if any exist
+  if (formulas.length > 0) {
+    lines.push('');
+    lines.push('[Formulas]');
+    lines.push(...formulas);
+  }
+
+  return lines.join('\n');
+}
+
+/**
+ * Extract HTML from Excel spreadsheet buffer (preserves table formatting)
+ * @param {Buffer} buffer - XLSX/XLS file buffer
+ * @returns {Promise<{html: string, sheetCount: number}>}
+ */
+export async function extractHtmlFromXlsx(buffer) {
+  // Lazy load xlsx
+  if (!XLSX) {
+    XLSX = await import('xlsx');
+  }
+
+  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  const htmlParts = [];
+
+  // Process each sheet
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    // Convert to HTML table
+    const html = XLSX.utils.sheet_to_html(sheet, { header: '' });
+    if (html.trim()) {
+      htmlParts.push(`<h2>${sheetName}</h2>\n${html}`);
+    }
+  }
+
+  return {
+    html: htmlParts.join('\n'),
+    sheetCount: workbook.SheetNames.length
+  };
 }
 
 /**
@@ -321,7 +458,7 @@ function extractTitleFromUrl(url) {
     const pathname = new URL(url).pathname;
     const filename = pathname.split('/').pop() || '';
     // Remove extension and clean up
-    return filename.replace(/\.(pdf|docx|doc|html|htm)$/i, '').replace(/[-_]/g, ' ');
+    return filename.replace(/\.(pdf|docx|doc|xlsx|xls|pptx|ppt|html|htm)$/i, '').replace(/[-_]/g, ' ');
   } catch {
     return '';
   }
@@ -348,6 +485,12 @@ export async function extractTextFromBuffer(buffer, filename) {
   } else if (lowerFilename.endsWith('.doc')) {
     type = 'docx';
     text = await extractTextFromDocx(buffer);
+  } else if (lowerFilename.endsWith('.xlsx')) {
+    type = 'xlsx';
+    text = await extractTextFromXlsx(buffer);
+  } else if (lowerFilename.endsWith('.xls')) {
+    type = 'xlsx';
+    text = await extractTextFromXlsx(buffer);
   } else if (lowerFilename.endsWith('.txt')) {
     type = 'text';
     text = buffer.toString('utf-8');

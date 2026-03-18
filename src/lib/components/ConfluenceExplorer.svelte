@@ -719,6 +719,14 @@
             </div>
           {/if}
 
+          {#if selectedPost.source_url}
+            <div class="post-source">
+              <a href={selectedPost.source_url} target="_blank" rel="noopener noreferrer" class="source-link">
+                🔗 {selectedPost.source_url}
+              </a>
+            </div>
+          {/if}
+
           <!-- Action buttons -->
           <div class="post-actions">
             <button class="btn-action link-btn" on:click={() => copyPostLink(selectedPost.id)}>
@@ -1346,6 +1354,31 @@
     padding: 0.25rem 0.75rem;
     border-radius: 9999px;
     font-size: 0.75rem;
+  }
+
+  .post-source {
+    margin-bottom: 1rem;
+  }
+
+  .post-source .source-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    background: #dbeafe;
+    border: 1px solid #bfdbfe;
+    border-radius: 8px;
+    color: #1d4ed8;
+    font-size: 0.875rem;
+    text-decoration: none;
+    word-break: break-all;
+    transition: all 0.2s;
+  }
+
+  .post-source .source-link:hover {
+    background: #bfdbfe;
+    border-color: #93c5fd;
+    color: #1e40af;
   }
 
   .post-actions {

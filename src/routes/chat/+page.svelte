@@ -1,10 +1,21 @@
 <script>
   import { onMount } from 'svelte';
 
+  export let data;
+
   let messages = [];
   let inputMessage = '';
   let isLoading = false;
+  let isSaving = false;
+  let saveSuccess = null;
   let messagesContainer;
+
+  // Document filter
+  $: vectorizedPosts = data.vectorizedPosts || [];
+  let selectedPostId = data.selectedPostId || null;
+  $: selectedPostTitle = selectedPostId
+    ? vectorizedPosts.find(p => p.id === selectedPostId)?.title
+    : null;
 
   function scrollToBottom() {
     if (messagesContainer) {
@@ -29,10 +40,21 @@
     setTimeout(scrollToBottom, 0);
 
     try {
+      // Build conversation history (exclude the placeholder we just added)
+      const history = messages.slice(0, -1).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: userMessage, limit: 5 })
+        body: JSON.stringify({
+          message: userMessage,
+          history: history,
+          postId: selectedPostId,  // Filter by specific document
+          limit: 5
+        })
       });
 
       if (!response.ok) {
@@ -112,6 +134,53 @@
 
   function clearChat() {
     messages = [];
+    saveSuccess = null;
+  }
+
+  async function saveChat() {
+    if (messages.length === 0 || isSaving) return;
+
+    isSaving = true;
+    saveSuccess = null;
+
+    try {
+      const response = await fetch('/api/chat/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: messages.map(m => ({
+            role: m.role,
+            content: m.content,
+            sources: m.sources
+          })),
+          category: 'chat-logs',
+          vectorize: true
+        })
+      });
+
+      const result = await response.json();
+
+      if (result.success) {
+        saveSuccess = {
+          success: true,
+          postId: result.post.id,
+          slug: result.post.slug,
+          title: result.post.title
+        };
+      } else {
+        saveSuccess = {
+          success: false,
+          error: result.error
+        };
+      }
+    } catch (error) {
+      saveSuccess = {
+        success: false,
+        error: error.message
+      };
+    } finally {
+      isSaving = false;
+    }
   }
 </script>
 
@@ -121,10 +190,59 @@
 
 <div class="chat-container">
   <div class="chat-header">
-    <h1>Knowledge Base Chat</h1>
-    <p class="subtitle">Ask questions about your documents</p>
-    {#if messages.length > 0}
-      <button class="clear-btn" on:click={clearChat}>Clear Chat</button>
+    <div class="header-top">
+      <div>
+        <h1>Knowledge Base Chat</h1>
+        <p class="subtitle">Ask questions about your documents</p>
+      </div>
+      {#if messages.length > 0}
+        <div class="header-actions">
+          <button
+            class="save-btn"
+            on:click={saveChat}
+            disabled={isSaving || isLoading}
+          >
+            {#if isSaving}
+              Saving...
+            {:else}
+              Save as Post
+            {/if}
+          </button>
+          <button class="clear-btn" on:click={clearChat}>Clear Chat</button>
+        </div>
+      {/if}
+    </div>
+
+    <!-- Document Scope Filter -->
+    <div class="scope-filter">
+      <label for="doc-filter">Search in:</label>
+      <select id="doc-filter" bind:value={selectedPostId} class="doc-select">
+        <option value={null}>All Documents</option>
+        {#each vectorizedPosts as post}
+          <option value={post.id}>{post.title} ({post.chunk_count} chunks)</option>
+        {/each}
+      </select>
+      {#if selectedPostId}
+        <button class="clear-filter-btn" on:click={() => selectedPostId = null} title="Clear filter">
+          ✕
+        </button>
+      {/if}
+    </div>
+
+    {#if selectedPostId}
+      <div class="scope-indicator">
+        Searching only in: <strong>{selectedPostTitle}</strong>
+      </div>
+    {/if}
+
+    {#if saveSuccess}
+      <div class="save-result {saveSuccess.success ? 'success' : 'error'}">
+        {#if saveSuccess.success}
+          Saved! <a href="/blog/{saveSuccess.slug}">View post: {saveSuccess.title}</a>
+        {:else}
+          Error: {saveSuccess.error}
+        {/if}
+      </div>
     {/if}
   </div>
 
@@ -200,7 +318,12 @@
   .chat-header {
     padding: 1rem 0;
     border-bottom: 1px solid #e5e7eb;
-    position: relative;
+  }
+
+  .header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
   }
 
   .chat-header h1 {
@@ -215,11 +338,72 @@
     font-size: 0.875rem;
   }
 
-  .clear-btn {
-    position: absolute;
-    right: 0;
-    top: 50%;
-    transform: translateY(-50%);
+  .header-actions {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  /* Document Scope Filter */
+  .scope-filter {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #f3f4f6;
+  }
+
+  .scope-filter label {
+    font-size: 0.875rem;
+    color: #6b7280;
+  }
+
+  .doc-select {
+    flex: 1;
+    max-width: 400px;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: white;
+  }
+
+  .doc-select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+  }
+
+  .clear-filter-btn {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #e5e7eb;
+    background: #f3f4f6;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.875rem;
+    color: #6b7280;
+    transition: all 0.2s;
+  }
+
+  .clear-filter-btn:hover {
+    background: #e5e7eb;
+    color: #374151;
+  }
+
+  .scope-indicator {
+    margin-top: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: #dbeafe;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #1e40af;
+  }
+
+  .scope-indicator strong {
+    font-weight: 600;
+  }
+
+  .clear-btn, .save-btn {
     background: #f3f4f6;
     border: 1px solid #e5e7eb;
     padding: 0.5rem 1rem;
@@ -230,9 +414,47 @@
     transition: all 0.2s;
   }
 
-  .clear-btn:hover {
+  .clear-btn:hover, .save-btn:hover:not(:disabled) {
     background: #e5e7eb;
     color: #374151;
+  }
+
+  .save-btn {
+    background: #dbeafe;
+    border-color: #bfdbfe;
+    color: #1d4ed8;
+  }
+
+  .save-btn:hover:not(:disabled) {
+    background: #bfdbfe;
+    color: #1e40af;
+  }
+
+  .save-btn:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .save-result {
+    margin-top: 0.5rem;
+    padding: 0.5rem 1rem;
+    border-radius: 6px;
+    font-size: 0.875rem;
+  }
+
+  .save-result.success {
+    background: #d1fae5;
+    color: #065f46;
+  }
+
+  .save-result.success a {
+    color: #047857;
+    text-decoration: underline;
+  }
+
+  .save-result.error {
+    background: #fee2e2;
+    color: #991b1b;
   }
 
   .messages-container {
@@ -395,10 +617,11 @@
       max-width: 95%;
     }
 
-    .clear-btn {
+    .header-actions {
       position: static;
       transform: none;
       margin-top: 0.5rem;
+      justify-content: flex-end;
     }
 
     .input-container {

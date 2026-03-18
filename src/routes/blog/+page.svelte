@@ -20,6 +20,8 @@
     $: searchQuery = data.searchQuery || '';
     $: selectedCategory = data.categoryFilter || 'all';
     $: selectedAuthor = data.authorFilter || 'all';
+    $: selectedTag = data.tagFilter || 'all';
+    $: tags = data.tags || [];
     $: paths = data.paths || [];
     
     // Handle edit post from URL parameter
@@ -165,9 +167,16 @@
       if (searchQuery) params.set('search', searchQuery);
       if (selectedCategory !== 'all') params.set('category', selectedCategory);
       if (selectedAuthor !== 'all') params.set('author', selectedAuthor);
+      if (selectedTag !== 'all') params.set('tag', selectedTag);
 
       const url = `/blog${params.toString() ? '?' + params.toString() : ''}`;
       goto(url);
+    }
+
+    // Function to filter by tag (called when clicking a tag)
+    function filterByTag(tag) {
+      selectedTag = tag;
+      handleSearch();
     }
     
     // Debounced search - wait 800ms after user stops typing
@@ -676,7 +685,7 @@
     async function importDocument() {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.pdf,.docx,.pptx,.txt,.html,.htm';
+      input.accept = '.pdf,.docx,.pptx,.xlsx,.xls,.txt,.html,.htm';
 
       input.onchange = async (e) => {
         const file = e.target.files?.[0];
@@ -959,7 +968,7 @@
     function triggerFileUpload(postId) {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = '.pdf,.docx,.pptx,.txt,.html,.htm';
+      input.accept = '.pdf,.docx,.pptx,.xlsx,.xls,.txt,.html,.htm';
       input.onchange = (e) => {
         const file = e.target.files?.[0];
         if (file) {
@@ -1485,6 +1494,21 @@
                       on:click={() => editor?.chain().focus().toggleCode().run()}
                       title="Inline Code"
                     >&lt;&gt;</button>
+                    <label class="toolbar-btn color-picker-btn" title="Text Color">
+                      <span class="color-icon">A</span>
+                      <input
+                        type="color"
+                        class="color-input"
+                        value="#000000"
+                        on:input={(e) => editor?.chain().focus().setColor(e.target.value).run()}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      class="toolbar-btn"
+                      on:click={() => editor?.chain().focus().unsetColor().run()}
+                      title="Remove Color"
+                    >⊘</button>
                   </div>
 
                   <div class="toolbar-group">
@@ -1749,6 +1773,19 @@
               <option disabled>No authors available</option>
             {/if}
           </select>
+
+          <select bind:value={selectedTag} on:change={handleSearch} class="tag-filter" disabled={loading || searchMode !== 'keyword'}>
+            <option value="all">All Tags</option>
+            {#if tags && tags.length > 0}
+              {#each tags as tag}
+                <option value={tag.name}>
+                  🏷️ {tag.name} ({tag.post_count})
+                </option>
+              {/each}
+            {:else}
+              <option disabled>No tags available</option>
+            {/if}
+          </select>
         </div>
       </div>
       
@@ -1818,11 +1855,11 @@
             <div class="empty-icon">📝</div>
             <h2>No posts found</h2>
             <p>
-              {searchQuery || selectedCategory !== 'all' || selectedAuthor !== 'all'
+              {searchQuery || selectedCategory !== 'all' || selectedAuthor !== 'all' || selectedTag !== 'all'
                 ? 'Try adjusting your search or filter'
                 : 'Be the first to share your thoughts with the community!'}
             </p>
-            {#if !searchQuery && selectedCategory === 'all' && selectedAuthor === 'all' && data.user}
+            {#if !searchQuery && selectedCategory === 'all' && selectedAuthor === 'all' && selectedTag === 'all' && data.user}
               <button class="btn btn-primary" on:click={createNewPost}>
                 Write the First Post
               </button>
@@ -1890,7 +1927,7 @@
                 {#if post.tags && post.tags.length > 0}
                   <div class="post-tags">
                     {#each post.tags as tag}
-                      <span class="tag">🏷️ {tag}</span>
+                      <a href="/blog?tag={encodeURIComponent(tag)}" class="tag tag-clickable" title="Filter by tag: {tag}">🏷️ {tag}</a>
                     {/each}
                   </div>
                 {/if}
@@ -2036,6 +2073,14 @@
       border-radius: 6px;
       font-size: 1rem;
       min-width: 200px;
+    }
+
+    .tag-filter {
+      padding: 0.75rem 1rem;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      font-size: 1rem;
+      min-width: 180px;
     }
 
     /* Semantic Search Toggle */
@@ -2382,6 +2427,18 @@
       padding: 0.25rem 0.5rem;
       border-radius: 4px;
       font-size: 0.75rem;
+    }
+
+    .tag-clickable {
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .tag-clickable:hover {
+      background: #e5e7eb;
+      color: #1f2937;
+      transform: translateY(-1px);
     }
     
     .post-footer {
@@ -2765,6 +2822,41 @@
     .toolbar-btn:disabled {
       opacity: 0.4;
       cursor: not-allowed;
+    }
+
+    /* Color Picker Button */
+    .color-picker-btn {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .color-picker-btn .color-icon {
+      font-weight: bold;
+      background: linear-gradient(to right, #ef4444, #f59e0b, #10b981, #3b82f6, #8b5cf6);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .color-picker-btn .color-input {
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 4px;
+      padding: 0;
+      border: none;
+      cursor: pointer;
+      opacity: 0.8;
+    }
+
+    .color-picker-btn .color-input::-webkit-color-swatch-wrapper {
+      padding: 0;
+    }
+
+    .color-picker-btn .color-input::-webkit-color-swatch {
+      border: none;
+      border-radius: 0;
     }
 
     /* Link Input Bar */
