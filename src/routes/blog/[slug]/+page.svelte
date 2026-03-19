@@ -54,6 +54,14 @@
             {/each}
           </div>
         {/if}
+
+        {#if data.post.chunk_count > 0}
+          <div class="header-actions">
+            <a href="/chat?post={data.post.id}" class="chat-link" title="Chat about this document">
+              💬 Chat About This
+            </a>
+          </div>
+        {/if}
       </header>
       
       <div class="post-content">
@@ -64,11 +72,6 @@
         <div class="footer-content">
           <a href="/blog" class="back-link">← Back to Blog</a>
           <div class="footer-actions">
-            {#if data.post.chunk_count > 0}
-              <a href="/chat?post={data.post.id}" class="chat-link" title="Chat about this document">
-                💬 Chat About This
-              </a>
-            {/if}
             <button class="report-link" on:click={openReportModal} title="Report content issue">
               ⚠️ Report Issue
             </button>
@@ -150,6 +153,30 @@
       padding: 0.375rem 0.75rem;
       border-radius: 6px;
       font-size: 0.875rem;
+    }
+
+    .header-actions {
+      margin-top: 1rem;
+    }
+
+    .header-actions .chat-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      color: #1d4ed8;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .header-actions .chat-link:hover {
+      background: #bfdbfe;
+      border-color: #93c5fd;
+      color: #1e40af;
     }
     
     .post-content {
