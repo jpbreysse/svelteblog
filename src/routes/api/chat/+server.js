@@ -57,13 +57,8 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
   // - Users can see: public posts, their own posts, or posts in groups they belong to
   const isAdmin = userRole === 'admin';
 
-  // Post filter condition (null means all posts)
-  const postFilter = postId ? 'AND p.id = $4' : '';
-
-  // Path filter condition (null means all folders)
-  const pathFilter = pathId ? 'AND p.path_id = $5' : '';
-
   // Hybrid query with permission filtering and optional post/path filter
+  // Using null-safe conditions: ($4::int IS NULL OR p.id = $4)
   const result = await pool.query(
     `WITH ranked_chunks AS (
       SELECT
@@ -89,8 +84,8 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
       LEFT JOIN post_read_groups prg ON p.id = prg.post_id
       LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
       WHERE p.published = true
-        ${postFilter}
-        ${pathFilter}
+        AND ($4::int IS NULL OR p.id = $4)
+        AND ($5::int IS NULL OR p.path_id = $5)
         AND (
           -- Admins can see everything
           $3 = true
