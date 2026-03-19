@@ -6,6 +6,7 @@
  * - message: User's question (required)
  * - history: Array of previous messages [{role: 'user'|'assistant', content: '...'}] (optional)
  * - postId: Filter to specific post ID (optional - null for all documents)
+ * - pathId: Filter to specific folder/path ID (optional - null for all folders)
  * - limit: Number of context chunks (default: 5)
  * - keywordWeight: Hybrid search weight (default: 0.3)
  *
@@ -28,8 +29,9 @@ import { generateStream, checkOllama } from '$lib/server/ollama.js';
  * @param {number} limit - Max results
  * @param {number} keywordWeight - Weight for keyword matching
  * @param {number|null} postId - Filter to specific post (null for all)
+ * @param {number|null} pathId - Filter to specific folder/path (null for all)
  */
-async function hybridSearch(query, userId, userRole = 'user', limit = 5, keywordWeight = 0.3, postId = null) {
+async function hybridSearch(query, userId, userRole = 'user', limit = 5, keywordWeight = 0.3, postId = null, pathId = null) {
   // Generate embedding
   const queryEmbedding = await generateEmbedding(query);
   const embeddingStr = '[' + queryEmbedding.join(',') + ']';
@@ -46,8 +48,8 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
     .split(/\s+/)
     .filter(word => word.length > 2 && !stopWords.has(word));
 
-  // Build SQL - keyword params start at $5 (after embedding, userId, isAdmin, postId)
-  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 5}`);
+  // Build SQL - keyword params start at $6 (after embedding, userId, isAdmin, postId, pathId)
+  const keywordConditions = keywords.map((_, i) => `LOWER(dc.chunk_text) LIKE $${i + 6}`);
   const keywordParams = keywords.map(k => `%${k}%`);
 
   // Permission filtering:
@@ -58,7 +60,10 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
   // Post filter condition (null means all posts)
   const postFilter = postId ? 'AND p.id = $4' : '';
 
-  // Hybrid query with permission filtering and optional post filter
+  // Path filter condition (null means all folders)
+  const pathFilter = pathId ? 'AND p.path_id = $5' : '';
+
+  // Hybrid query with permission filtering and optional post/path filter
   const result = await pool.query(
     `WITH ranked_chunks AS (
       SELECT
@@ -78,13 +83,14 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
           THEN 1.0
           ELSE 0.0
         END as keyword_match,
-        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 5} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
+        (${keywords.map((_, i) => `CASE WHEN LOWER(dc.chunk_text) LIKE $${i + 6} THEN 1 ELSE 0 END`).join(' + ') || '0'}) as keyword_count
       FROM document_chunks dc
       JOIN posts p ON dc.post_id = p.id
       LEFT JOIN post_read_groups prg ON p.id = prg.post_id
       LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
       WHERE p.published = true
         ${postFilter}
+        ${pathFilter}
         AND (
           -- Admins can see everything
           $3 = true
@@ -101,7 +107,7 @@ async function hybridSearch(query, userId, userRole = 'user', limit = 5, keyword
       (semantic_similarity * ${1 - keywordWeight}) + (keyword_match * ${keywordWeight}) + (keyword_count * 0.05) as hybrid_score
     FROM ranked_chunks
     ORDER BY post_id, hybrid_score DESC, semantic_similarity DESC`,
-    [embeddingStr, userId, isAdmin, postId, ...keywordParams]
+    [embeddingStr, userId, isAdmin, postId, pathId, ...keywordParams]
   );
 
   // Re-sort by hybrid_score after DISTINCT ON
@@ -237,7 +243,7 @@ export async function POST({ request, locals }) {
 
   try {
     const body = await request.json();
-    const { message, history = [], postId = null, limit = 5, keywordWeight = 0.3 } = body;
+    const { message, history = [], postId = null, pathId = null, limit = 5, keywordWeight = 0.3 } = body;
 
     if (!message || message.trim().length === 0) {
       return new Response(
@@ -271,10 +277,10 @@ export async function POST({ request, locals }) {
       );
     }
 
-    console.log(`💬 RAG Chat: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}" (user: ${locals.user.id}, role: ${locals.user.role}${postId ? `, post: ${postId}` : ''})`);
+    console.log(`💬 RAG Chat: "${message.substring(0, 50)}${message.length > 50 ? '...' : ''}" (user: ${locals.user.id}, role: ${locals.user.role}${postId ? `, post: ${postId}` : ''}${pathId ? `, path: ${pathId}` : ''})`);
 
-    // Perform hybrid search with permission filtering (and optional post filter)
-    const contextChunks = await hybridSearch(message, locals.user.id, locals.user.role, limit, keywordWeight, postId);
+    // Perform hybrid search with permission filtering (and optional post/path filter)
+    const contextChunks = await hybridSearch(message, locals.user.id, locals.user.role, limit, keywordWeight, postId, pathId);
     console.log(`   Found ${contextChunks.length} relevant chunks (filtered by user permissions)`);
 
     // Build RAG prompt with conversation history

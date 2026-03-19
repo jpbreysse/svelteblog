@@ -10,12 +10,32 @@
   let saveSuccess = null;
   let messagesContainer;
 
+  // Folder filter
+  $: paths = data.paths || [];
+  let selectedPathId = data.selectedPathId || null;
+  $: selectedPathName = selectedPathId
+    ? paths.find(p => p.id === selectedPathId)?.name
+    : null;
+
   // Document filter
   $: vectorizedPosts = data.vectorizedPosts || [];
   let selectedPostId = data.selectedPostId || null;
   $: selectedPostTitle = selectedPostId
     ? vectorizedPosts.find(p => p.id === selectedPostId)?.title
     : null;
+
+  // Filter posts by selected folder
+  $: filteredPosts = selectedPathId
+    ? vectorizedPosts.filter(p => p.path_id === selectedPathId)
+    : vectorizedPosts;
+
+  // Clear document selection when folder changes (if document not in folder)
+  $: if (selectedPathId && selectedPostId) {
+    const postInFolder = vectorizedPosts.find(p => p.id === selectedPostId && p.path_id === selectedPathId);
+    if (!postInFolder) {
+      selectedPostId = null;
+    }
+  }
 
   function scrollToBottom() {
     if (messagesContainer) {
@@ -53,6 +73,7 @@
           message: userMessage,
           history: history,
           postId: selectedPostId,  // Filter by specific document
+          pathId: selectedPostId ? null : selectedPathId,  // Filter by folder (only if no specific doc)
           limit: 5
         })
       });
@@ -213,17 +234,26 @@
       {/if}
     </div>
 
-    <!-- Document Scope Filter -->
+    <!-- Scope Filters -->
     <div class="scope-filter">
-      <label for="doc-filter">Search in:</label>
+      <label for="folder-filter">Folder:</label>
+      <select id="folder-filter" bind:value={selectedPathId} class="folder-select">
+        <option value={null}>All Folders</option>
+        {#each paths as path}
+          <option value={path.id}>{path.icon || '📁'} {path.name} ({path.post_count} docs)</option>
+        {/each}
+      </select>
+
+      <label for="doc-filter">Document:</label>
       <select id="doc-filter" bind:value={selectedPostId} class="doc-select">
-        <option value={null}>All Documents</option>
-        {#each vectorizedPosts as post}
+        <option value={null}>{selectedPathId ? 'All in folder' : 'All Documents'}</option>
+        {#each filteredPosts as post}
           <option value={post.id}>{post.title} ({post.chunk_count} chunks)</option>
         {/each}
       </select>
-      {#if selectedPostId}
-        <button class="clear-filter-btn" on:click={() => selectedPostId = null} title="Clear filter">
+
+      {#if selectedPathId || selectedPostId}
+        <button class="clear-filter-btn" on:click={() => { selectedPathId = null; selectedPostId = null; }} title="Clear filters">
           ✕
         </button>
       {/if}
@@ -231,7 +261,11 @@
 
     {#if selectedPostId}
       <div class="scope-indicator">
-        Searching only in: <strong>{selectedPostTitle}</strong>
+        Searching in document: <strong>{selectedPostTitle}</strong>
+      </div>
+    {:else if selectedPathId}
+      <div class="scope-indicator">
+        Searching in folder: <strong>{selectedPathName}</strong> ({filteredPosts.length} documents)
       </div>
     {/if}
 
@@ -351,15 +385,33 @@
     margin-top: 0.75rem;
     padding-top: 0.75rem;
     border-top: 1px solid #f3f4f6;
+    flex-wrap: wrap;
   }
 
   .scope-filter label {
     font-size: 0.875rem;
     color: #6b7280;
+    white-space: nowrap;
+  }
+
+  .folder-select {
+    min-width: 180px;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid #d1d5db;
+    border-radius: 6px;
+    font-size: 0.875rem;
+    background: white;
+  }
+
+  .folder-select:focus {
+    outline: none;
+    border-color: #2563eb;
+    box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
   }
 
   .doc-select {
     flex: 1;
+    min-width: 200px;
     max-width: 400px;
     padding: 0.5rem 0.75rem;
     border: 1px solid #d1d5db;
