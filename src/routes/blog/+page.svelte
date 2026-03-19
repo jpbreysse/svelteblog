@@ -1376,16 +1376,27 @@
                 <div class="path-label">Folder</div>
               </div>
 
-              {#if editingPost.category === 'link'}
+              {#if editingPost.category === 'link' || editingPost.category === 'word-doc' || editingPost.category === 'pdf-doc' || editingPost.category === 'excel-doc'}
                 <div class="input-group source-url-group">
                   <input
                     bind:value={editingPost.source_url}
-                    placeholder="External URL (HTML pages only)"
+                    placeholder={
+                      editingPost.category === 'link' ? 'External URL (HTML pages only)' :
+                      editingPost.category === 'word-doc' ? 'Word document URL (.docx)' :
+                      editingPost.category === 'pdf-doc' ? 'PDF document URL (.pdf)' :
+                      'Excel document URL (.xlsx)'
+                    }
                     class="source-url-input"
                     type="url"
                     disabled={loading}
                   />
-                  <div class="source-url-label">External URL for vectorization (HTML only, not PDF)</div>
+                  <div class="source-url-label">
+                    {#if editingPost.category === 'link'}
+                      External URL for vectorization (HTML only)
+                    {:else}
+                      Document URL - content will be extracted when vectorizing
+                    {/if}
+                  </div>
                 </div>
               {/if}
 
@@ -1912,10 +1923,11 @@
                   <span class="category">📂 {post.category}</span>
                 </div>
 
-                {#if post.category === 'link' && post.source_url}
+                {#if post.source_url && ['link', 'word-doc', 'pdf-doc', 'excel-doc'].includes(post.category)}
                   <div class="external-link">
                     <a href={post.source_url} target="_blank" rel="noopener noreferrer" class="source-link">
-                      🔗 {post.source_url}
+                      {#if post.category === 'word-doc'}📄{:else if post.category === 'pdf-doc'}📕{:else if post.category === 'excel-doc'}📊{:else}🔗{/if}
+                      {post.source_url}
                     </a>
                   </div>
                 {/if}
