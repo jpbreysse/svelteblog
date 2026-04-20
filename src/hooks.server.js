@@ -1,5 +1,5 @@
 import { verifyToken } from '$lib/auth.js';
-import { db } from '$lib/db.js';
+import { userDB } from '$lib/db.js';
 
 export async function handle({ event, resolve }) {
   const token = event.cookies.get('auth_token');
@@ -12,18 +12,22 @@ export async function handle({ event, resolve }) {
     
     if (payload) {
       try {
-        const user = db.prepare('SELECT * FROM users WHERE id = ? AND status = ?').get(payload.id, 'approved');
+        // ✅ FIXED: Use async userDB method instead of db.prepare()
+        const user = await userDB.getUserById(payload.id);
         console.log('👤 Hook - User from DB:', user ? `${user.email} (${user.role})` : 'Not found');
         
-        if (user) {
+        // Check if user is approved
+        if (user && user.status === 'approved') {
           event.locals.user = {
             id: user.id,
             email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            role: user.role
+            display_name: user.display_name,
+            role: user.role,
+            status: user.status
           };
           console.log('✅ Hook - User set in locals:', event.locals.user.email, event.locals.user.role);
+        } else if (user) {
+          console.log('⚠️ Hook - User found but not approved, status:', user.status);
         }
       } catch (error) {
         console.error('❌ Hook - Database error:', error);

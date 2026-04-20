@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TipTap Full Editor Test</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #f5f5f5;
+    }
+
+    h1 {
+      color: #1f2937;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      margin-bottom: 2rem;
+    }
+
+    .editor-container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 12px;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 2px;
+      padding-right: 8px;
+      border-right: 1px solid #e5e7eb;
+      margin-right: 8px;
+      align-items: center;
+    }
+
+    .toolbar-group:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+
+    .toolbar button {
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      background: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      min-width: 36px;
+    }
+
+    .toolbar button:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+
+    .toolbar button.is-active {
+      background: #2563eb;
+      color: white;
+      border-color: #2563eb;
+    }
+
+    .toolbar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .toolbar select {
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: white;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .toolbar input[type="color"] {
+      width: 36px;
+      height: 36px;
+      padding: 2px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+
+    .toolbar-label {
+      font-size: 12px;
+      color: #6b7280;
+      margin-right: 4px;
+    }
+
+    .table-controls {
+      background: #fef3c7;
+      padding: 8px 12px;
+      border-bottom: 1px solid #fcd34d;
+      display: none;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .table-controls.visible {
+      display: flex;
+    }
+
+    .table-controls button {
+      padding: 6px 12px;
+      border: 1px solid #f59e0b;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .table-controls button:hover {
+      background: #fde68a;
+    }
+
+    .table-controls button.danger {
+      border-color: #ef4444;
+      color: #dc2626;
+    }
+
+    .table-controls button.danger:hover {
+      background: #fee2e2;
+    }
+
+    .link-input {
+      display: none;
+      background: #eff6ff;
+      padding: 8px 12px;
+      border-bottom: 1px solid #bfdbfe;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .link-input.visible {
+      display: flex;
+    }
+
+    .link-input input {
+      flex: 1;
+      padding: 8px;
+      border: 1px solid #d1d5db;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+
+    .link-input button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+    }
+
+    .link-input button.primary {
+      background: #2563eb;
+      color: white;
+    }
+
+    .link-input button.secondary {
+      background: #e5e7eb;
+      color: #374151;
+    }
+
+    .editor {
+      padding: 20px;
+      min-height: 500px;
+      outline: none;
+    }
+
+    .editor:focus {
+      outline: none;
+    }
+
+    /* Editor content styles */
+    .editor h1 { font-size: 2em; margin: 0.5em 0; }
+    .editor h2 { font-size: 1.5em; margin: 0.5em 0; }
+    .editor h3 { font-size: 1.25em; margin: 0.5em 0; }
+    .editor p { margin: 0.5em 0; line-height: 1.6; }
+    .editor ul, .editor ol { padding-left: 1.5em; margin: 0.5em 0; }
+
+    /* Task list styles */
+    .editor ul[data-type="taskList"] {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .editor ul[data-type="taskList"] li {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+    }
+
+    .editor ul[data-type="taskList"] li > label {
+      margin-top: 4px;
+    }
+
+    .editor ul[data-type="taskList"] li > div {
+      flex: 1;
+    }
+
+    .editor ul[data-type="taskList"] input[type="checkbox"] {
+      width: 18px;
+      height: 18px;
+      cursor: pointer;
+    }
+
+    .editor blockquote {
+      border-left: 4px solid #2563eb;
+      padding-left: 1em;
+      margin: 1em 0;
+      color: #6b7280;
+      font-style: italic;
+      background: #f8fafc;
+      padding: 1em;
+      border-radius: 0 8px 8px 0;
+    }
+
+    .editor code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 0.9em;
+    }
+
+    .editor pre {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 1em;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-family: 'Monaco', 'Menlo', monospace;
+    }
+
+    .editor pre code {
+      background: none;
+      padding: 0;
+      color: inherit;
+    }
+
+    .editor hr {
+      border: none;
+      border-top: 2px solid #e5e7eb;
+      margin: 2em 0;
+    }
+
+    .editor img {
+      max-width: 100%;
+      height: auto;
+      border-radius: 8px;
+    }
+
+    .editor.drag-over {
+      background: #eff6ff;
+      border: 2px dashed #2563eb;
+    }
+
+    .editor a {
+      color: #2563eb;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .editor mark {
+      background: #fef08a;
+      padding: 2px 4px;
+      border-radius: 2px;
+    }
+
+    /* Text alignment */
+    .editor .text-left { text-align: left; }
+    .editor .text-center { text-align: center; }
+    .editor .text-right { text-align: right; }
+    .editor .text-justify { text-align: justify; }
+
+    /* Table styles */
+    .editor table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+      table-layout: fixed;
+    }
+
+    .editor th,
+    .editor td {
+      border: 2px solid #d1d5db;
+      padding: 8px 12px;
+      text-align: left;
+      position: relative;
+      min-width: 100px;
+    }
+
+    .editor th {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+
+    .editor tr:hover td {
+      background: #f9fafb;
+    }
+
+    .editor .selectedCell {
+      background: #dbeafe !important;
+    }
+
+    .editor .column-resize-handle {
+      position: absolute;
+      right: -2px;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: #2563eb;
+      cursor: col-resize;
+    }
+
+    /* Placeholder */
+    .editor p.is-editor-empty:first-child::before {
+      content: attr(data-placeholder);
+      float: left;
+      color: #9ca3af;
+      pointer-events: none;
+      height: 0;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 4px;
+      margin-top: 2rem;
+      background: white;
+      padding: 8px;
+      border-radius: 12px 12px 0 0;
+      box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.05);
+    }
+
+    .tabs button {
+      padding: 10px 20px;
+      border: none;
+      background: #f3f4f6;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+      color: #6b7280;
+      transition: all 0.2s;
+    }
+
+    .tabs button:hover {
+      background: #e5e7eb;
+    }
+
+    .tabs button.active {
+      background: #2563eb;
+      color: white;
+    }
+
+    .output-section {
+      background: white;
+      border-radius: 0 0 12px 12px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .output-section pre {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      max-height: 300px;
+      margin: 0;
+    }
+
+    .output-section .preview {
+      padding: 1rem;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      min-height: 100px;
+    }
+
+    .tab-content {
+      display: none;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-top: 2rem;
+    }
+
+    .feature-card {
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    .feature-card h4 {
+      margin: 0 0 0.5rem 0;
+      color: #1f2937;
+    }
+
+    .feature-card p {
+      margin: 0;
+      color: #6b7280;
+      font-size: 14px;
+    }
+
+    .feature-card .icon {
+      font-size: 24px;
+      margin-bottom: 0.5rem;
+    }
+  </style>
+</head>
+<body>
+  <h1>TipTap Full Editor Test</h1>
+  <p class="subtitle">Complete rich text editor with all features - test everything!</p>
+
+  <div class="editor-container">
+    <div class="toolbar">
+      <!-- Text Style -->
+      <div class="toolbar-group">
+        <select id="heading-select">
+          <option value="paragraph">Paragraph</option>
+          <option value="1">Heading 1</option>
+          <option value="2">Heading 2</option>
+          <option value="3">Heading 3</option>
+        </select>
+      </div>
+
+      <!-- Basic Formatting -->
+      <div class="toolbar-group">
+        <button id="btn-bold" title="Bold (Ctrl+B)"><b>B</b></button>
+        <button id="btn-italic" title="Italic (Ctrl+I)"><i>I</i></button>
+        <button id="btn-underline" title="Underline (Ctrl+U)"><u>U</u></button>
+        <button id="btn-strike" title="Strikethrough"><s>S</s></button>
+        <button id="btn-code" title="Inline Code">&lt;&gt;</button>
+      </div>
+
+      <!-- Colors -->
+      <div class="toolbar-group">
+        <span class="toolbar-label">Text</span>
+        <input type="color" id="text-color" value="#000000" title="Text Color">
+        <span class="toolbar-label">Highlight</span>
+        <input type="color" id="highlight-color" value="#fef08a" title="Highlight">
+        <button id="btn-clear-color" title="Clear Colors">Clear</button>
+      </div>
+
+      <!-- Alignment -->
+      <div class="toolbar-group">
+        <button id="btn-align-left" title="Align Left">Left</button>
+        <button id="btn-align-center" title="Align Center">Center</button>
+        <button id="btn-align-right" title="Align Right">Right</button>
+        <button id="btn-align-justify" title="Justify">Justify</button>
+      </div>
+
+      <!-- Lists -->
+      <div class="toolbar-group">
+        <button id="btn-bullet-list" title="Bullet List">• List</button>
+        <button id="btn-ordered-list" title="Numbered List">1. List</button>
+        <button id="btn-task-list" title="Task List">☑ Tasks</button>
+      </div>
+
+      <!-- Blocks -->
+      <div class="toolbar-group">
+        <button id="btn-blockquote" title="Quote">"</button>
+        <button id="btn-code-block" title="Code Block">{}</button>
+        <button id="btn-hr" title="Horizontal Rule">—</button>
+      </div>
+
+      <!-- Media & Links -->
+      <div class="toolbar-group">
+        <button id="btn-link" title="Add Link">🔗</button>
+        <button id="btn-image" title="Upload Image">🖼️ Upload</button>
+        <button id="btn-image-url" title="Image from URL">🔗 URL</button>
+        <button id="btn-table" title="Insert Table">▦</button>
+        <input type="file" id="image-upload" accept="image/*" style="display: none;">
+      </div>
+
+      <!-- History -->
+      <div class="toolbar-group">
+        <button id="btn-undo" title="Undo (Ctrl+Z)">↩</button>
+        <button id="btn-redo" title="Redo (Ctrl+Y)">↪</button>
+      </div>
+    </div>
+
+    <!-- Link Input Bar -->
+    <div class="link-input" id="link-input">
+      <span class="toolbar-label">URL:</span>
+      <input type="url" id="link-url" placeholder="https://example.com">
+      <button class="primary" id="btn-set-link">Set Link</button>
+      <button class="secondary" id="btn-unset-link">Remove</button>
+      <button class="secondary" id="btn-cancel-link">Cancel</button>
+    </div>
+
+    <!-- Table Controls -->
+    <div class="table-controls" id="table-controls">
+      <span style="font-weight: 600; color: #92400e;">Table:</span>
+      <button id="btn-add-row-before">+ Row Above</button>
+      <button id="btn-add-row-after">+ Row Below</button>
+      <button id="btn-add-col-before">+ Col Left</button>
+      <button id="btn-add-col-after">+ Col Right</button>
+      <button id="btn-delete-row" class="danger">Delete Row</button>
+      <button id="btn-delete-col" class="danger">Delete Col</button>
+      <button id="btn-merge-cells">Merge Cells</button>
+      <button id="btn-split-cell">Split Cell</button>
+      <button id="btn-toggle-header">Toggle Header</button>
+      <button id="btn-delete-table" class="danger">Delete Table</button>
+    </div>
+
+    <div class="editor" id="editor"></div>
+  </div>
+
+  <!-- Output Tabs -->
+  <div class="tabs">
+    <button class="active" data-tab="html">HTML Output</button>
+    <button data-tab="json">JSON Output</button>
+    <button data-tab="preview">Preview</button>
+  </div>
+
+  <div class="output-section">
+    <div id="tab-html" class="tab-content active">
+      <pre id="html-output"></pre>
+    </div>
+    <div id="tab-json" class="tab-content">
+      <pre id="json-output"></pre>
+    </div>
+    <div id="tab-preview" class="tab-content">
+      <div class="preview" id="preview-output"></div>
+    </div>
+  </div>
+
+  <!-- Feature Cards -->
+  <div class="feature-grid">
+    <div class="feature-card">
+      <div class="icon">📝</div>
+      <h4>Rich Text</h4>
+      <p>Bold, italic, underline, strikethrough, inline code</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🎨</div>
+      <h4>Colors</h4>
+      <p>Text color and background highlight</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📋</div>
+      <h4>Lists</h4>
+      <p>Bullet, numbered, and task lists</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">📊</div>
+      <h4>Tables</h4>
+      <p>Full table editing with add/delete rows & columns</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🔗</div>
+      <h4>Links</h4>
+      <p>Add and edit hyperlinks</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">🖼️</div>
+      <h4>Images</h4>
+      <p>Upload, paste, drag & drop (Base64)</p>
+    </div>
+    <div class="feature-card">
+      <div class="icon">💻</div>
+      <h4>Code</h4>
+      <p>Inline code and code blocks</p>
+    </div>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "@tiptap/core": "https://esm.sh/@tiptap/core@2.1.13",
+      "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.1.13",
+      "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@2.1.13",
+      "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@2.1.13",
+      "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@2.1.13",
+      "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@2.1.13",
+      "@tiptap/extension-link": "https://esm.sh/@tiptap/extension-link@2.1.13",
+      "@tiptap/extension-image": "https://esm.sh/@tiptap/extension-image@2.1.13",
+      "@tiptap/extension-underline": "https://esm.sh/@tiptap/extension-underline@2.1.13",
+      "@tiptap/extension-text-align": "https://esm.sh/@tiptap/extension-text-align@2.1.13",
+      "@tiptap/extension-highlight": "https://esm.sh/@tiptap/extension-highlight@2.1.13",
+      "@tiptap/extension-color": "https://esm.sh/@tiptap/extension-color@2.1.13",
+      "@tiptap/extension-text-style": "https://esm.sh/@tiptap/extension-text-style@2.1.13",
+      "@tiptap/extension-task-list": "https://esm.sh/@tiptap/extension-task-list@2.1.13",
+      "@tiptap/extension-task-item": "https://esm.sh/@tiptap/extension-task-item@2.1.13",
+      "@tiptap/extension-placeholder": "https://esm.sh/@tiptap/extension-placeholder@2.1.13",
+      "@tiptap/extension-code-block-lowlight": "https://esm.sh/@tiptap/extension-code-block-lowlight@2.1.13"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { Editor } from '@tiptap/core';
+    import StarterKit from '@tiptap/starter-kit';
+    import Table from '@tiptap/extension-table';
+    import TableRow from '@tiptap/extension-table-row';
+    import TableCell from '@tiptap/extension-table-cell';
+    import TableHeader from '@tiptap/extension-table-header';
+    import Link from '@tiptap/extension-link';
+    import Image from '@tiptap/extension-image';
+    import Underline from '@tiptap/extension-underline';
+    import TextAlign from '@tiptap/extension-text-align';
+    import Highlight from '@tiptap/extension-highlight';
+    import TextStyle from '@tiptap/extension-text-style';
+    import Color from '@tiptap/extension-color';
+    import TaskList from '@tiptap/extension-task-list';
+    import TaskItem from '@tiptap/extension-task-item';
+    import Placeholder from '@tiptap/extension-placeholder';
+
+    // Initialize editor
+    const editor = new Editor({
+      element: document.querySelector('#editor'),
+      extensions: [
+        StarterKit.configure({
+          codeBlock: true,
+        }),
+        Underline,
+        TextStyle,
+        Color,
+        Highlight.configure({
+          multicolor: true,
+        }),
+        TextAlign.configure({
+          types: ['heading', 'paragraph'],
+        }),
+        Link.configure({
+          openOnClick: false,
+          HTMLAttributes: {
+            target: '_blank',
+          },
+        }),
+        Image,
+        TaskList,
+        TaskItem.configure({
+          nested: true,
+        }),
+        Table.configure({
+          resizable: true,
+        }),
+        TableRow,
+        TableCell,
+        TableHeader,
+        Placeholder.configure({
+          placeholder: 'Start writing something amazing...',
+        }),
+      ],
+      content: `
+        <h1>Welcome to TipTap Full Editor!</h1>
+        <p>This is a <strong>complete</strong> rich text editor with <em>all the features</em> you need.</p>
+
+        <h2>Text Formatting</h2>
+        <p>You can make text <strong>bold</strong>, <em>italic</em>, <u>underlined</u>, <s>strikethrough</s>, or <code>inline code</code>.</p>
+        <p>Try adding <mark>highlights</mark> or <span style="color: #dc2626">colored text</span>!</p>
+
+        <h2>Lists</h2>
+        <h3>Bullet List</h3>
+        <ul>
+          <li>First item</li>
+          <li>Second item</li>
+          <li>Third item</li>
+        </ul>
+
+        <h3>Numbered List</h3>
+        <ol>
+          <li>Step one</li>
+          <li>Step two</li>
+          <li>Step three</li>
+        </ol>
+
+        <h3>Task List</h3>
+        <ul data-type="taskList">
+          <li data-type="taskItem" data-checked="true">Completed task</li>
+          <li data-type="taskItem" data-checked="false">Pending task</li>
+          <li data-type="taskItem" data-checked="false">Another task</li>
+        </ul>
+
+        <h2>Blockquote</h2>
+        <blockquote>
+          <p>This is a blockquote. Great for highlighting important information or quotes.</p>
+        </blockquote>
+
+        <h2>Code Block</h2>
+        <pre><code>function hello() {
+  console.log('Hello, TipTap!');
+}</code></pre>
+
+        <h2>Table</h2>
+        <table>
+          <tr>
+            <th>Feature</th>
+            <th>Quill</th>
+            <th>TipTap</th>
+          </tr>
+          <tr>
+            <td>Tables</td>
+            <td>Basic</td>
+            <td>Full support</td>
+          </tr>
+          <tr>
+            <td>Task Lists</td>
+            <td>No</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>Merge Cells</td>
+            <td>No</td>
+            <td>Yes</td>
+          </tr>
+        </table>
+        <p>Click inside the table to see table controls!</p>
+
+        <hr>
+        <p>That's it! Try all the features and see how TipTap compares to Quill.</p>
+      `,
+      onUpdate: ({ editor }) => {
+        updateOutputs(editor);
+        updateTableControls(editor);
+      },
+      onSelectionUpdate: ({ editor }) => {
+        updateToolbarState(editor);
+        updateTableControls(editor);
+      },
+    });
+
+    function updateOutputs(editor) {
+      document.getElementById('html-output').textContent = editor.getHTML();
+      document.getElementById('json-output').textContent = JSON.stringify(editor.getJSON(), null, 2);
+      document.getElementById('preview-output').innerHTML = editor.getHTML();
+    }
+
+    function updateTableControls(editor) {
+      const tableControls = document.getElementById('table-controls');
+      if (editor.isActive('table')) {
+        tableControls.classList.add('visible');
+      } else {
+        tableControls.classList.remove('visible');
+      }
+    }
+
+    function updateToolbarState(editor) {
+      // Text formatting
+      document.getElementById('btn-bold').classList.toggle('is-active', editor.isActive('bold'));
+      document.getElementById('btn-italic').classList.toggle('is-active', editor.isActive('italic'));
+      document.getElementById('btn-underline').classList.toggle('is-active', editor.isActive('underline'));
+      document.getElementById('btn-strike').classList.toggle('is-active', editor.isActive('strike'));
+      document.getElementById('btn-code').classList.toggle('is-active', editor.isActive('code'));
+
+      // Lists
+      document.getElementById('btn-bullet-list').classList.toggle('is-active', editor.isActive('bulletList'));
+      document.getElementById('btn-ordered-list').classList.toggle('is-active', editor.isActive('orderedList'));
+      document.getElementById('btn-task-list').classList.toggle('is-active', editor.isActive('taskList'));
+
+      // Blocks
+      document.getElementById('btn-blockquote').classList.toggle('is-active', editor.isActive('blockquote'));
+      document.getElementById('btn-code-block').classList.toggle('is-active', editor.isActive('codeBlock'));
+
+      // Alignment
+      document.getElementById('btn-align-left').classList.toggle('is-active', editor.isActive({ textAlign: 'left' }));
+      document.getElementById('btn-align-center').classList.toggle('is-active', editor.isActive({ textAlign: 'center' }));
+      document.getElementById('btn-align-right').classList.toggle('is-active', editor.isActive({ textAlign: 'right' }));
+      document.getElementById('btn-align-justify').classList.toggle('is-active', editor.isActive({ textAlign: 'justify' }));
+
+      // Link
+      document.getElementById('btn-link').classList.toggle('is-active', editor.isActive('link'));
+
+      // Heading select
+      const headingSelect = document.getElementById('heading-select');
+      if (editor.isActive('heading', { level: 1 })) {
+        headingSelect.value = '1';
+      } else if (editor.isActive('heading', { level: 2 })) {
+        headingSelect.value = '2';
+      } else if (editor.isActive('heading', { level: 3 })) {
+        headingSelect.value = '3';
+      } else {
+        headingSelect.value = 'paragraph';
+      }
+    }
+
+    // Initial output
+    updateOutputs(editor);
+
+    // Tab switching
+    document.querySelectorAll('.tabs button').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.tabs button').forEach(b => b.classList.remove('active'));
+        document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+        btn.classList.add('active');
+        document.getElementById(`tab-${btn.dataset.tab}`).classList.add('active');
+      });
+    });
+
+    // Heading select
+    document.getElementById('heading-select').addEventListener('change', (e) => {
+      const value = e.target.value;
+      if (value === 'paragraph') {
+        editor.chain().focus().setParagraph().run();
+      } else {
+        editor.chain().focus().toggleHeading({ level: parseInt(value) }).run();
+      }
+    });
+
+    // Basic formatting
+    document.getElementById('btn-bold').addEventListener('click', () => editor.chain().focus().toggleBold().run());
+    document.getElementById('btn-italic').addEventListener('click', () => editor.chain().focus().toggleItalic().run());
+    document.getElementById('btn-underline').addEventListener('click', () => editor.chain().focus().toggleUnderline().run());
+    document.getElementById('btn-strike').addEventListener('click', () => editor.chain().focus().toggleStrike().run());
+    document.getElementById('btn-code').addEventListener('click', () => editor.chain().focus().toggleCode().run());
+
+    // Colors
+    document.getElementById('text-color').addEventListener('input', (e) => {
+      editor.chain().focus().setColor(e.target.value).run();
+    });
+    document.getElementById('highlight-color').addEventListener('input', (e) => {
+      editor.chain().focus().toggleHighlight({ color: e.target.value }).run();
+    });
+    document.getElementById('btn-clear-color').addEventListener('click', () => {
+      editor.chain().focus().unsetColor().unsetHighlight().run();
+    });
+
+    // Alignment
+    document.getElementById('btn-align-left').addEventListener('click', () => editor.chain().focus().setTextAlign('left').run());
+    document.getElementById('btn-align-center').addEventListener('click', () => editor.chain().focus().setTextAlign('center').run());
+    document.getElementById('btn-align-right').addEventListener('click', () => editor.chain().focus().setTextAlign('right').run());
+    document.getElementById('btn-align-justify').addEventListener('click', () => editor.chain().focus().setTextAlign('justify').run());
+
+    // Lists
+    document.getElementById('btn-bullet-list').addEventListener('click', () => editor.chain().focus().toggleBulletList().run());
+    document.getElementById('btn-ordered-list').addEventListener('click', () => editor.chain().focus().toggleOrderedList().run());
+    document.getElementById('btn-task-list').addEventListener('click', () => editor.chain().focus().toggleTaskList().run());
+
+    // Blocks
+    document.getElementById('btn-blockquote').addEventListener('click', () => editor.chain().focus().toggleBlockquote().run());
+    document.getElementById('btn-code-block').addEventListener('click', () => editor.chain().focus().toggleCodeBlock().run());
+    document.getElementById('btn-hr').addEventListener('click', () => editor.chain().focus().setHorizontalRule().run());
+
+    // Link handling
+    const linkInput = document.getElementById('link-input');
+    const linkUrl = document.getElementById('link-url');
+
+    document.getElementById('btn-link').addEventListener('click', () => {
+      if (editor.isActive('link')) {
+        linkUrl.value = editor.getAttributes('link').href || '';
+      } else {
+        linkUrl.value = '';
+      }
+      linkInput.classList.add('visible');
+      linkUrl.focus();
+    });
+
+    document.getElementById('btn-set-link').addEventListener('click', () => {
+      const url = linkUrl.value;
+      if (url) {
+        editor.chain().focus().setLink({ href: url }).run();
+      }
+      linkInput.classList.remove('visible');
+    });
+
+    document.getElementById('btn-unset-link').addEventListener('click', () => {
+      editor.chain().focus().unsetLink().run();
+      linkInput.classList.remove('visible');
+    });
+
+    document.getElementById('btn-cancel-link').addEventListener('click', () => {
+      linkInput.classList.remove('visible');
+    });
+
+    // Image upload (Base64)
+    const imageUpload = document.getElementById('image-upload');
+
+    document.getElementById('btn-image').addEventListener('click', () => {
+      imageUpload.click();
+    });
+
+    document.getElementById('btn-image-url').addEventListener('click', () => {
+      const url = prompt('Enter image URL:');
+      if (url) {
+        editor.chain().focus().setImage({ src: url }).run();
+      }
+    });
+
+    imageUpload.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (file) {
+        convertToBase64AndInsert(file);
+      }
+      // Reset input so same file can be selected again
+      imageUpload.value = '';
+    });
+
+    function convertToBase64AndInsert(file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Please select an image file');
+        return;
+      }
+
+      // Check file size (limit to 5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        alert('Image is too large. Maximum size is 5MB.');
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target.result;
+        editor.chain().focus().setImage({ src: base64 }).run();
+      };
+      reader.onerror = () => {
+        alert('Failed to read image file');
+      };
+      reader.readAsDataURL(file);
+    }
+
+    // Paste image from clipboard
+    document.querySelector('#editor').addEventListener('paste', (e) => {
+      const items = e.clipboardData?.items;
+      if (!items) return;
+
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const file = item.getAsFile();
+          if (file) {
+            convertToBase64AndInsert(file);
+          }
+          break;
+        }
+      }
+    });
+
+    // Drag & drop image
+    const editorElement = document.querySelector('#editor');
+
+    editorElement.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      editorElement.style.background = '#eff6ff';
+    });
+
+    editorElement.addEventListener('dragleave', (e) => {
+      editorElement.style.background = '';
+    });
+
+    editorElement.addEventListener('drop', (e) => {
+      e.preventDefault();
+      editorElement.style.background = '';
+
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        for (const file of files) {
+          if (file.type.startsWith('image/')) {
+            convertToBase64AndInsert(file);
+            break;
+          }
+        }
+      }
+    });
+
+    // Table
+    document.getElementById('btn-table').addEventListener('click', () => {
+      editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    });
+
+    // Table controls
+    document.getElementById('btn-add-row-before').addEventListener('click', () => editor.chain().focus().addRowBefore().run());
+    document.getElementById('btn-add-row-after').addEventListener('click', () => editor.chain().focus().addRowAfter().run());
+    document.getElementById('btn-add-col-before').addEventListener('click', () => editor.chain().focus().addColumnBefore().run());
+    document.getElementById('btn-add-col-after').addEventListener('click', () => editor.chain().focus().addColumnAfter().run());
+    document.getElementById('btn-delete-row').addEventListener('click', () => editor.chain().focus().deleteRow().run());
+    document.getElementById('btn-delete-col').addEventListener('click', () => editor.chain().focus().deleteColumn().run());
+    document.getElementById('btn-merge-cells').addEventListener('click', () => editor.chain().focus().mergeCells().run());
+    document.getElementById('btn-split-cell').addEventListener('click', () => editor.chain().focus().splitCell().run());
+    document.getElementById('btn-toggle-header').addEventListener('click', () => editor.chain().focus().toggleHeaderRow().run());
+    document.getElementById('btn-delete-table').addEventListener('click', () => editor.chain().focus().deleteTable().run());
+
+    // History
+    document.getElementById('btn-undo').addEventListener('click', () => editor.chain().focus().undo().run());
+    document.getElementById('btn-redo').addEventListener('click', () => editor.chain().focus().redo().run());
+  </script>
+</body>
+</html>

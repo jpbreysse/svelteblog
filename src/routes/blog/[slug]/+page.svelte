@@ -1,5 +1,11 @@
 <script>
+    import ReportModal from '$lib/components/ReportModal.svelte';
+    
     export let data;
+    
+    // Report modal state
+    let showReportModal = false;
+    let reportPostData = {};
     
     function formatDate(date) {
       return new Date(date).toLocaleDateString('en-US', { 
@@ -7,6 +13,15 @@
         month: 'long', 
         day: 'numeric' 
       });
+    }
+    
+    function openReportModal() {
+      reportPostData = {
+        postId: data.post.id,
+        postTitle: data.post.title,
+        postUrl: window.location.href
+      };
+      showReportModal = true;
     }
   </script>
   
@@ -18,8 +33,13 @@
   <div class="post-container">
     <article class="post-article">
       <header class="post-header">
-        <h1 class="post-title">{data.post.title}</h1>
-        
+        <h1 class="post-title">
+          {#if data.post.category_post_number}
+            <span class="title-prefix">{data.post.category.substring(0, 3).toUpperCase()} #{data.post.category_post_number}:</span>
+          {/if}
+          {data.post.title}
+        </h1>
+
         <div class="post-meta">
           <span class="author">👤 {data.post.author}</span>
           <span class="date">📅 {formatDate(data.post.created_at)}</span>
@@ -34,6 +54,14 @@
             {/each}
           </div>
         {/if}
+
+        {#if data.post.chunk_count > 0}
+          <div class="header-actions">
+            <a href="/chat?post={data.post.id}" class="chat-link" title="Chat about this document">
+              💬 Chat About This
+            </a>
+          </div>
+        {/if}
       </header>
       
       <div class="post-content">
@@ -41,18 +69,34 @@
       </div>
       
       <footer class="post-footer">
-        <a href="/blog" class="back-link">← Back to Blog</a>
+        <div class="footer-content">
+          <a href="/blog" class="back-link">← Back to Blog</a>
+          <div class="footer-actions">
+            <button class="report-link" on:click={openReportModal} title="Report content issue">
+              ⚠️ Report Issue
+            </button>
+          </div>
+        </div>
       </footer>
     </article>
   </div>
   
+  <!-- Report Modal -->
+  <ReportModal 
+    isOpen={showReportModal}
+    postTitle={reportPostData.postTitle}
+    postUrl={reportPostData.postUrl}
+    postId={reportPostData.postId}
+    on:close={() => showReportModal = false}
+  />
+  
   <style>
     .post-container {
-      max-width: 800px;
+      max-width: 1400px;
       margin: 0 auto;
       padding: 2rem;
     }
-    
+
     .post-article {
       background: white;
       border-radius: 12px;
@@ -73,7 +117,15 @@
       margin: 0 0 1.5rem 0;
       line-height: 1.2;
     }
-    
+
+    .title-prefix {
+      color: #2563eb;
+      font-weight: 700;
+      font-size: 0.7em;
+      margin-right: 0.5rem;
+      display: inline-block;
+    }
+
     .post-meta {
       display: flex;
       gap: 2rem;
@@ -82,7 +134,13 @@
       color: #6b7280;
       margin-bottom: 1rem;
     }
-    
+
+    .post-number {
+      font-weight: 600;
+      color: #2563eb;
+      margin-left: 0.25rem;
+    }
+
     .post-tags {
       display: flex;
       gap: 0.5rem;
@@ -95,6 +153,30 @@
       padding: 0.375rem 0.75rem;
       border-radius: 6px;
       font-size: 0.875rem;
+    }
+
+    .header-actions {
+      margin-top: 1rem;
+    }
+
+    .header-actions .chat-link {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      color: #1d4ed8;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .header-actions .chat-link:hover {
+      background: #bfdbfe;
+      border-color: #93c5fd;
+      color: #1e40af;
     }
     
     .post-content {
@@ -124,17 +206,60 @@
     }
     
     .post-content :global(p) {
-      margin: 1rem 0;
+      margin: 0 0 1rem 0;
+    }
+
+    /* Collapse empty paragraphs (Quill creates <p><br></p> for blank lines) */
+    .post-content :global(p:empty) {
+      display: none;
+    }
+
+    .post-content :global(p > br:only-child) {
+      display: none;
+    }
+
+    .post-content :global(br + br) {
+      display: none;
     }
     
     .post-content :global(ul),
     .post-content :global(ol) {
       margin: 1rem 0;
       padding-left: 2rem;
+      list-style-type: none;
     }
     
     .post-content :global(li) {
+      list-style-type: none;
+      position: relative;
+      padding-left: 1.5em;
       margin: 0.5rem 0;
+    }
+    
+    /* Bullet lists - Quill uses data-list="bullet" */
+    .post-content :global(li[data-list="bullet"]::before) {
+      content: '\2022';
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
+    }
+    
+    /* Numbered lists - Quill uses data-list="ordered" */
+    .post-content :global(ol) {
+      counter-reset: list-0 list-1 list-2 list-3 list-4 list-5;
+    }
+    
+    .post-content :global(li[data-list="ordered"]) {
+      counter-increment: list-0;
+    }
+    
+    .post-content :global(li[data-list="ordered"]::before) {
+      content: counter(list-0, decimal) ".";
+      position: absolute;
+      left: 0;
+      color: inherit;
+      font-weight: bold;
     }
     
     .post-content :global(blockquote) {
@@ -177,7 +302,29 @@
       border-radius: 8px;
       margin: 1.5rem 0;
     }
-    
+
+    .post-content :global(table) {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1.5rem 0;
+    }
+
+    .post-content :global(th),
+    .post-content :global(td) {
+      border: 1px solid #d1d5db;
+      padding: 0.75rem 1rem;
+      text-align: left;
+    }
+
+    .post-content :global(th) {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+
+    .post-content :global(tr:hover) {
+      background: #f9fafb;
+    }
+
     .post-content :global(a) {
       color: #2563eb;
       text-decoration: underline;
@@ -189,10 +336,17 @@
     
     .post-footer {
       display: flex;
-      justify-content: flex-start;
+      justify-content: space-between;
       align-items: center;
       padding-top: 2rem;
       border-top: 1px solid #e5e7eb;
+    }
+    
+    .footer-content {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      width: 100%;
     }
     
     .back-link {
@@ -209,26 +363,102 @@
       text-decoration: none;
     }
     
+    .footer-actions {
+      display: flex;
+      gap: 0.5rem;
+      align-items: center;
+    }
+
+    .chat-link {
+      background: #dbeafe;
+      border: 1px solid #bfdbfe;
+      color: #1d4ed8;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      text-decoration: none;
+      transition: all 0.2s;
+    }
+
+    .chat-link:hover {
+      background: #bfdbfe;
+      border-color: #93c5fd;
+      color: #1e40af;
+    }
+
+    .report-link {
+      background: none;
+      border: 1px solid #d1d5db;
+      color: #6b7280;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .report-link:hover {
+      background: #fee2e2;
+      border-color: #fca5a5;
+      color: #dc2626;
+    }
+    
     @media (max-width: 768px) {
       .post-container {
-        padding: 1rem;
+        padding: 0.5rem;
       }
-      
+
       .post-article {
-        padding: 2rem 1.5rem;
+        padding: 1.5rem 1rem;
+        border-radius: 8px;
       }
-      
+
       .post-title {
-        font-size: 2rem;
+        font-size: 1.75rem;
       }
-      
+
       .post-meta {
         font-size: 0.875rem;
-        gap: 1rem;
+        gap: 0.75rem;
       }
-      
+
       .post-content {
         font-size: 1rem;
+      }
+
+      .footer-content {
+        flex-direction: column;
+        gap: 1rem;
+        align-items: stretch;
+      }
+
+      .back-link, .report-link, .chat-link {
+        text-align: center;
+        justify-content: center;
+      }
+
+      .footer-actions {
+        flex-wrap: wrap;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .post-container {
+        padding: 0;
+      }
+
+      .post-article {
+        padding: 1rem;
+        border-radius: 0;
+      }
+
+      .post-title {
+        font-size: 1.5rem;
+      }
+
+      .post-meta {
+        font-size: 0.75rem;
+        gap: 0.5rem;
       }
     }
   </style>

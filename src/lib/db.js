@@ -1,131 +1,67 @@
-import Database from 'better-sqlite3';
-import { dev } from '$app/environment';
+import pg from 'pg';
+import dotenv from 'dotenv';
 import bcrypt from 'bcrypt';
 
-const db = new Database(dev ? 'dev.db' : 'prod.db');
+// Load environment variables
+dotenv.config();
 
-// Enable foreign keys and WAL mode for better performance
-db.pragma('foreign_keys = ON');
-db.pragma('journal_mode = WAL');
+const { Pool } = pg;
 
-// Initialize USER tables (your existing setup)
-try {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      first_name TEXT NOT NULL,
-      last_name TEXT NOT NULL,
-      password_hash TEXT NOT NULL,
-      status TEXT DEFAULT 'pending' CHECK(status IN ('pending', 'approved', 'rejected')),
-      role TEXT DEFAULT 'user' CHECK(role IN ('user', 'admin')),
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      approved_at DATETIME,
-      approved_by INTEGER,
-      FOREIGN KEY (approved_by) REFERENCES users(id)
-    )
-  `);
-  
-  console.log('✅ User tables initialized successfully');
-} catch (error) {
-  console.error('❌ Error creating user tables:', error);
-  throw error;
+// ============================================
+// PostgreSQL Connection Pool Setup
+// ============================================
+console.log('🔄 Initializing PostgreSQL connection pool...');
+
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL environment variable is not set. Check your .env file.');
 }
 
-// Initialize BLOG tables (new addition)
-try {
-  // Posts table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS posts (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL,
-      content TEXT NOT NULL,
-      excerpt TEXT,
-      category TEXT NOT NULL DEFAULT 'thoughts',
-      slug TEXT UNIQUE NOT NULL,
-      read_time TEXT,
-      author_id INTEGER NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      published BOOLEAN DEFAULT 1,
-      FOREIGN KEY (author_id) REFERENCES users(id) ON DELETE CASCADE
-    )
-  `);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: parseInt(process.env.DATABASE_POOL_SIZE || '10'),
+  idleTimeoutMillis: parseInt(process.env.DATABASE_POOL_IDLE_TIMEOUT || '30000'),
+  connectionTimeoutMillis: 2000,
+});
 
-  // Tags table
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tags (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT UNIQUE NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+// Connection pool event handlers
+pool.on('error', (err) => {
+  console.error('❌ Pool error (will attempt to recover):', err.message);
+  console.error('   Error code:', err.code);
+  // Don't exit - let the pool recover and retry connections automatically
+});
 
-  // Post-Tags junction table (many-to-many relationship)
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS post_tags (
-      post_id INTEGER,
-      tag_id INTEGER,
-      PRIMARY KEY (post_id, tag_id),
-      FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE,
-      FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-    )
-  `);
+pool.on('connect', () => {
+  console.log('✅ PostgreSQL connection pool initialized');
+});
 
-  // Create indexes for better performance
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_posts_category ON posts(category);
-    CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts(created_at DESC);
-    CREATE INDEX IF NOT EXISTS idx_posts_published ON posts(published);
-    CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug);
-    CREATE INDEX IF NOT EXISTS idx_posts_author ON posts(author_id);
-    CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name);
-  `);
+pool.on('remove', () => {
+  console.log('⚠️ Connection removed from pool');
+});
 
-  console.log('✅ Blog tables initialized successfully');
-} catch (error) {
-  console.error('❌ Error creating blog tables:', error);
-  throw error;
-}
-
-// Create default admin user (your existing logic)
-async function createDefaultAdmin() {
+// Test connection on startup
+async function testConnection() {
   try {
-    const adminExists = db.prepare('SELECT id FROM users WHERE role = ?').get('admin');
-    
-    if (!adminExists) {
-      console.log('📝 Creating default admin user...');
-      
-      const hashedPassword = await bcrypt.hash('admin123', 10);
-      
-      const insertAdmin = db.prepare(`
-        INSERT INTO users (email, first_name, last_name, password_hash, status, role)
-        VALUES (?, ?, ?, ?, ?, ?)
-      `);
-      
-      const result = insertAdmin.run(
-        'admin@example.com', 
-        'Admin', 
-        'User', 
-        hashedPassword, 
-        'approved', 
-        'admin'
-      );
-      
-      console.log('✅ Default admin user created with ID:', result.lastInsertRowid);
-    } else {
-      console.log('✅ Admin user already exists');
-    }
+    const result = await pool.query('SELECT NOW()');
+    console.log('✅ PostgreSQL connection successful!');
+    console.log(`   Current database time: ${result.rows[0].now}`);
   } catch (error) {
-    console.error('❌ Error creating admin user:', error);
-    throw error;
+    console.error('❌ Failed to connect to PostgreSQL:');
+    console.error(`   Error: ${error.message}`);
+    console.error('   Make sure:');
+    console.error('   1. PostgreSQL is running: docker-compose up -d');
+    console.error('   2. DATABASE_URL is set in .env');
+    console.error('   3. Credentials match docker-compose.yml');
+    process.exit(1);
   }
 }
 
-// Initialize admin user
-createDefaultAdmin().catch(console.error);
+// Test connection on startup
+testConnection().catch(console.error);
 
-// BLOG Helper functions
+// Export the pool for use in other files
+export { pool };
+
+// Helper functions
 function generateSlug(title) {
   return title
     .toLowerCase()
@@ -146,390 +82,1588 @@ function generateExcerpt(content, length = 120) {
   return text.length > length ? text.substring(0, length) + '...' : text;
 }
 
-// BLOG database operations
+// ============================================
+// NOTE: All database methods below are STILL SYNCHRONOUS
+// They will be converted to ASYNC in Phases 2.2-2.4
+// ============================================
+
+// ============================================
+// BLOG Database Operations
+// Phase 2.3: All 13 methods converted to async ✅
+// ============================================
+
 export const blogDB = {
-  // Get all posts with author info
-  getAllPosts() {
-    const posts = db.prepare(`
-      SELECT 
-        p.*,
-        u.first_name, u.last_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+  /**
+   * Get all posts with author info
+   * @returns {Promise<Array>} All posts with author details
+   */
+  async getAllPosts() {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility, p.source_url,
+        u.id as author_id, u.display_name as author, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.published = 1
-      GROUP BY p.id
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      GROUP BY p.id, u.id, pa.id
       ORDER BY p.created_at DESC
-    `).all();
-
-    return posts.map(post => ({
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `);
+    return result.rows;
   },
 
-  // Get posts by user
-  getPostsByUser(userId) {
-    const posts = db.prepare(`
-      SELECT 
-        p.*,
-        u.first_name, u.last_name,
-        GROUP_CONCAT(t.name) as tags
+  /**
+   * Get posts by user/author
+   * @param {number} userId - User ID
+   * @returns {Promise<Array>} Posts authored by user
+   */
+  async getPostsByUser(userId) {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.content, p.excerpt, p.category, p.category_post_number, p.slug,
+        p.read_time, p.created_at, p.updated_at, p.published, p.visibility, p.source_url,
+        u.id as author_id, u.display_name as author, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.author_id = ?
-      GROUP BY p.id
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.author_id = $1 AND p.published = true
+      GROUP BY p.id, u.id, pa.id
       ORDER BY p.created_at DESC
-    `).all(userId);
-
-    return posts.map(post => ({
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `, [userId]);
+    return result.rows;
   },
 
-  // Get post by ID
-  getPostById(id) {
-    const post = db.prepare(`
+  /**
+   * Get post by ID
+   * @param {number} id - Post ID
+   * @returns {Promise<Object|null>} Post object or null
+   */
+  async getPostById(id) {
+    const result = await pool.query(`
       SELECT 
         p.*,
-        u.first_name, u.last_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+        u.id as author_id, u.display_name as author, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.id = ? AND p.published = 1
-      GROUP BY p.id
-    `).get(id);
-
-    if (!post) return null;
-
-    return {
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    };
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.id = $1
+      GROUP BY p.id, u.id, pa.id
+    `, [id]);
+    return result.rows[0] || null;
   },
 
-  // Get post by slug
-  getPostBySlug(slug) {
-    const post = db.prepare(`
+  /**
+   * Get post by slug
+   * @param {string} slug - Post slug
+   * @returns {Promise<Object|null>} Post object or null
+   */
+  async getPostBySlug(slug) {
+    const result = await pool.query(`
       SELECT 
         p.*,
-        u.first_name, u.last_name, u.email,
-        GROUP_CONCAT(t.name) as tags
+        u.id as author_id, u.display_name as author, u.email as author_email,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags,
+        pa.full_path as path
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.slug = ? AND p.published = 1
-      GROUP BY p.id
-    `).get(slug);
-
-    if (!post) return null;
-
-    return {
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    };
+      LEFT JOIN paths pa ON p.path_id = pa.id
+      WHERE p.slug = $1 AND p.published = true
+      GROUP BY p.id, u.id, pa.id
+    `, [slug]);
+    return result.rows[0] || null;
   },
 
-  // Create new post
-  createPost(postData, authorId) {
-    const { title, content, category = 'thoughts', tags = [] } = postData;
-    
-    if (!title || !content) {
-      throw new Error('Title and content are required');
-    }
+  /**
+   * Create new post
+   * @param {Object} postData - Post data (title, content, category, etc.)
+   * @param {number} authorId - Author user ID
+   * @returns {Promise<Object>} Created post with ID
+   */
+  async createPost(postData, authorId) {
+    const { title, content, category = 'thoughts', path_id = null, source_url = null } = postData;
 
+    // Generate slug, read_time, and excerpt
     const slug = generateSlug(title);
+    const read_time = calculateReadTime(content);
     const excerpt = generateExcerpt(content);
-    const readTime = calculateReadTime(content);
 
-    // Start transaction
-    const transaction = db.transaction(() => {
-      // Insert post
-      const result = db.prepare(`
-        INSERT INTO posts (title, content, excerpt, category, slug, read_time, author_id)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-      `).run(title, content, excerpt, category, slug, readTime, authorId);
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
 
-      const postId = result.lastInsertRowid;
+      // Get the next category post number
+      const numberResult = await client.query(`
+        SELECT COALESCE(MAX(category_post_number), 0) + 1 as next_num
+        FROM posts
+        WHERE category = $1
+      `, [category]);
+      const categoryPostNumber = numberResult.rows[0].next_num;
 
-      // Handle tags
-      if (tags.length > 0) {
-        this.updatePostTags(postId, tags);
+      // Insert the post with the assigned number
+      const visibility = postData.visibility || 'public';
+      const result = await client.query(`
+        INSERT INTO posts (
+          title, content, excerpt, category, category_post_number, slug, read_time,
+          author_id, path_id, published, visibility, source_url
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11)
+        RETURNING id, title, slug, category_post_number, created_at
+      `, [title, content, excerpt, category, categoryPostNumber, slug, read_time, authorId, path_id, visibility, source_url]);
+
+      await client.query('COMMIT');
+
+      if (result.rowCount === 0) {
+        throw new Error('Failed to create post');
       }
 
-      return postId;
-    });
-
-    const postId = transaction();
-    return this.getPostById(postId);
+      return {
+        success: true,
+        post: result.rows[0]
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
-  // Update existing post
-  updatePost(id, postData, authorId) {
-    const { title, content, category, tags = [] } = postData;
-    
-    // Check if user owns the post or is admin
-    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
+  /**
+   * Update existing post
+   * @param {number} id - Post ID
+   * @param {Object} postData - Updated data
+   * @param {number} authorId - User ID (for backward compatibility, not used for permission check)
+   * @param {boolean} isAdmin - Whether user is admin (for backward compatibility, not used for permission check)
+   * @param {boolean} skipPermissionCheck - Skip permission check (default: true, permissions checked in API layer)
+   * @returns {Promise<Object>} Success message
+   * @note Permission checks should be done in the API layer using canWritePost()
+   */
+  async updatePost(id, postData, authorId, isAdmin = false, skipPermissionCheck = true) {
+    // Verify post exists
+    const postResult = await pool.query(
+      'SELECT author_id FROM posts WHERE id = $1',
+      [id]
+    );
+    const post = postResult.rows[0];
+
     if (!post) {
       throw new Error('Post not found');
     }
-    
-    // Only allow author or admin to edit
-    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
-    if (post.author_id !== authorId && user?.role !== 'admin') {
-      throw new Error('Unauthorized to edit this post');
-    }
-    
-    const excerpt = generateExcerpt(content);
-    const readTime = calculateReadTime(content);
-    const slug = generateSlug(title);
 
-    // Start transaction
-    const transaction = db.transaction(() => {
-      // Update post
-      const result = db.prepare(`
-        UPDATE posts 
-        SET title = ?, content = ?, excerpt = ?, category = ?, slug = ?, 
-            read_time = ?, updated_at = CURRENT_TIMESTAMP
-        WHERE id = ?
-      `).run(title, content, excerpt, category, slug, readTime, id);
+    // Permission check (legacy - should be done in API layer)
+    if (!skipPermissionCheck) {
+      const postAuthorId = parseInt(post.author_id);
+      const userId = parseInt(authorId);
 
-      if (result.changes === 0) {
-        throw new Error('Post not found');
+      if (postAuthorId !== userId && !isAdmin) {
+        throw new Error(`You can only edit your own posts (post author: ${postAuthorId}, user: ${userId})`);
       }
+    }
 
-      // Update tags
-      this.updatePostTags(id, tags);
+    // Update the post
+    const { title, content, category, path_id, visibility, source_url } = postData;
+    const read_time = calculateReadTime(content);
+    const excerpt = generateExcerpt(content);
 
-      return id;
-    });
+    const result = await pool.query(`
+      UPDATE posts
+      SET title = $1, content = $2, excerpt = $3, category = $4,
+          read_time = $5, path_id = $6, visibility = $7, source_url = $8, updated_at = NOW()
+      WHERE id = $9
+    `, [title, content, excerpt, category, read_time, path_id, visibility || 'public', source_url || null, id]);
 
-    transaction();
-    return this.getPostById(id);
+    if (result.rowCount === 0) {
+      throw new Error('Failed to update post');
+    }
+
+    return { success: true, message: 'Post updated successfully' };
   },
 
-  // Delete post
-  deletePost(id, authorId) {
-    // Check if user owns the post or is admin
-    const post = db.prepare('SELECT author_id FROM posts WHERE id = ?').get(id);
+  /**
+   * Delete post
+   * @param {number} id - Post ID
+   * @param {number} authorId - User ID (for backward compatibility, not used for permission check)
+   * @param {boolean} isAdmin - Whether user is admin (for backward compatibility, not used for permission check)
+   * @param {boolean} skipPermissionCheck - Skip permission check (default: true, permissions checked in API layer)
+   * @returns {Promise<Object>} Success message
+   * @note Permission checks should be done in the API layer using canWritePost()
+   */
+  async deletePost(id, authorId, isAdmin = false, skipPermissionCheck = true) {
+    // Verify post exists
+    const postResult = await pool.query(
+      'SELECT author_id FROM posts WHERE id = $1',
+      [id]
+    );
+    const post = postResult.rows[0];
+
     if (!post) {
       throw new Error('Post not found');
     }
-    
-    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(authorId);
-    if (post.author_id !== authorId && user?.role !== 'admin') {
-      throw new Error('Unauthorized to delete this post');
-    }
-    
-    const result = db.prepare('DELETE FROM posts WHERE id = ?').run(id);
-    return result.changes > 0;
-  },
 
-  // Update post tags (helper method)
-  updatePostTags(postId, tagNames) {
-    // Remove existing tags for this post
-    db.prepare('DELETE FROM post_tags WHERE post_id = ?').run(postId);
+    // Permission check (legacy - should be done in API layer)
+    if (!skipPermissionCheck) {
+      const postAuthorId = parseInt(post.author_id);
+      const userId = parseInt(authorId);
 
-    if (tagNames.length === 0) return;
-
-    // Insert or get tags
-    const insertTag = db.prepare('INSERT OR IGNORE INTO tags (name) VALUES (?)');
-    const getTagId = db.prepare('SELECT id FROM tags WHERE name = ?');
-    const linkPostTag = db.prepare('INSERT INTO post_tags (post_id, tag_id) VALUES (?, ?)');
-
-    for (const tagName of tagNames) {
-      const cleanTag = tagName.trim().toLowerCase();
-      if (!cleanTag) continue;
-
-      insertTag.run(cleanTag);
-      const tag = getTagId.get(cleanTag);
-      if (tag) {
-        linkPostTag.run(postId, tag.id);
+      if (postAuthorId !== userId && !isAdmin) {
+        throw new Error('You can only delete your own posts');
       }
     }
+
+    // Delete post (cascade will delete tags via foreign key)
+    const result = await pool.query(
+      'DELETE FROM posts WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to delete post');
+    }
+
+    return { success: true, message: 'Post deleted successfully' };
   },
 
-  // Search posts
-  searchPosts(query, category = null) {
+  /**
+   * Update post tags
+   * @param {number} postId - Post ID
+   * @param {Array<string>} tagNames - Array of tag names
+   * @returns {Promise<Object>} Success message
+   */
+  async updatePostTags(postId, tagNames) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete existing tags for this post
+      await client.query('DELETE FROM post_tags WHERE post_id = $1', [postId]);
+
+      // For each tag, get or create it, then add to post
+      for (const tagName of tagNames) {
+        // Get or create tag
+        const tagResult = await client.query(`
+          INSERT INTO tags (name) VALUES ($1)
+          ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name
+          RETURNING id
+        `, [tagName]);
+
+        const tagId = tagResult.rows[0].id;
+
+        // Add tag to post
+        await client.query(
+          'INSERT INTO post_tags (post_id, tag_id) VALUES ($1, $2)',
+          [postId, tagId]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      return {
+        success: true,
+        message: `Post tagged with ${tagNames.length} tags`
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Search posts by title/content
+   * @param {string} query - Search query
+   * @param {string} category - Optional category filter
+   * @returns {Promise<Array>} Matching posts
+   */
+  async searchPosts(query, category = null) {
     let sql = `
-      SELECT 
-        p.*,
-        u.first_name, u.last_name,
-        GROUP_CONCAT(t.name) as tags
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
+        p.created_at, u.id as author_id, u.display_name as author,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.published = 1
-        AND (p.title LIKE ? OR p.content LIKE ? OR p.excerpt LIKE ?)
+      WHERE p.published = true
+        AND (p.title ILIKE $1 OR p.content ILIKE $1 OR p.excerpt ILIKE $1)
     `;
-    
-    const params = [`%${query}%`, `%${query}%`, `%${query}%`];
+
+    const params = [`%${query}%`];
 
     if (category) {
-      sql += ' AND p.category = ?';
+      sql += ' AND p.category = $2';
       params.push(category);
     }
 
-    sql += ' GROUP BY p.id ORDER BY p.created_at DESC';
+    sql += ' GROUP BY p.id, u.id ORDER BY p.created_at DESC';
 
-    const posts = db.prepare(sql).all(...params);
-
-    return posts.map(post => ({
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    const result = await pool.query(sql, params);
+    return result.rows;
   },
 
-  // Get posts by category
-  getPostsByCategory(category) {
-    const posts = db.prepare(`
-      SELECT 
-        p.*,
-        u.first_name, u.last_name,
-        GROUP_CONCAT(t.name) as tags
+  /**
+   * Get posts by category
+   * @param {string} category - Category name
+   * @returns {Promise<Array>} Posts in category
+   */
+  async getPostsByCategory(category) {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
+        p.created_at, u.id as author_id, u.display_name as author,
+        array_agg(DISTINCT t.name) FILTER (WHERE t.id IS NOT NULL) as tags
       FROM posts p
       INNER JOIN users u ON p.author_id = u.id
       LEFT JOIN post_tags pt ON p.id = pt.post_id
       LEFT JOIN tags t ON pt.tag_id = t.id
-      WHERE p.category = ? AND p.published = 1
-      GROUP BY p.id
+      WHERE p.category = $1 AND p.published = true
+      GROUP BY p.id, u.id
       ORDER BY p.created_at DESC
-    `).all(category);
-
-    return posts.map(post => ({
-      ...post,
-      author: `${post.first_name} ${post.last_name}`,
-      tags: post.tags ? post.tags.split(',') : [],
-      created_at: new Date(post.created_at),
-      updated_at: new Date(post.updated_at)
-    }));
+    `, [category]);
+    return result.rows;
   },
 
-  // Get all categories
-  getCategories() {
-    return db.prepare(`
-      SELECT category, COUNT(*) as count
-      FROM posts 
-      WHERE published = 1
+  /**
+   * Get posts by tag
+   * @param {string} tagName - Tag name
+   * @returns {Promise<Array>} Posts with this tag
+   */
+  async getPostsByTag(tagName) {
+    const result = await pool.query(`
+      SELECT
+        p.id, p.title, p.excerpt, p.category, p.category_post_number, p.slug, p.visibility, p.source_url,
+        p.created_at, u.id as author_id, u.display_name as author,
+        array_agg(DISTINCT t2.name) FILTER (WHERE t2.id IS NOT NULL) as tags
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      INNER JOIN post_tags pt ON p.id = pt.post_id
+      INNER JOIN tags t ON pt.tag_id = t.id
+      LEFT JOIN post_tags pt2 ON p.id = pt2.post_id
+      LEFT JOIN tags t2 ON pt2.tag_id = t2.id
+      WHERE t.name = $1 AND p.published = true
+      GROUP BY p.id, u.id
+      ORDER BY p.created_at DESC
+    `, [tagName]);
+    return result.rows;
+  },
+
+  /**
+   * Get all categories
+   * @returns {Promise<Array>} Distinct categories
+   */
+  async getCategories() {
+    const result = await pool.query(`
+      SELECT DISTINCT category, COUNT(*) as post_count
+      FROM posts
+      WHERE published = true
       GROUP BY category
-      ORDER BY category
-    `).all();
+      ORDER BY category ASC
+    `);
+    return result.rows;
   },
 
-  // Get all tags
-  getTags() {
-    return db.prepare(`
-      SELECT t.name, COUNT(pt.post_id) as count
+  /**
+   * Get all tags
+   * @returns {Promise<Array>} All tags with usage count
+   */
+  async getTags() {
+    const result = await pool.query(`
+      SELECT t.id, t.name, COUNT(pt.post_id) as post_count
       FROM tags t
-      LEFT JOIN post_tags pt ON t.id = pt.id
+      LEFT JOIN post_tags pt ON t.id = pt.tag_id
       GROUP BY t.id, t.name
-      ORDER BY count DESC, t.name
-    `).all();
+      ORDER BY post_count DESC, t.name ASC
+    `);
+    return result.rows;
   },
 
-  // Get database stats
-  getStats() {
-    const postCount = db.prepare('SELECT COUNT(*) as count FROM posts WHERE published = 1').get();
-    const categoryCount = db.prepare('SELECT COUNT(DISTINCT category) as count FROM posts WHERE published = 1').get();
-    const tagCount = db.prepare('SELECT COUNT(*) as count FROM tags').get();
-    
-    return {
-      posts: postCount.count,
-      categories: categoryCount.count,
-      tags: tagCount.count
-    };
+  /**
+   * Get all authors who have published posts
+   * @returns {Promise<Array>} All authors with post count
+   */
+  async getAuthors() {
+    const result = await pool.query(`
+      SELECT DISTINCT u.id, u.display_name, COUNT(p.id) as post_count
+      FROM users u
+      INNER JOIN posts p ON u.id = p.author_id
+      WHERE p.published = true
+      GROUP BY u.id, u.display_name
+      ORDER BY u.display_name ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get database statistics
+   * @returns {Promise<Object>} Database stats
+   */
+  async getStats() {
+    const result = await pool.query(`
+      SELECT
+        (SELECT COUNT(*) FROM posts WHERE published = true) as published_posts,
+        (SELECT COUNT(*) FROM posts) as total_posts,
+        (SELECT COUNT(*) FROM users WHERE role = 'user') as total_users,
+        (SELECT COUNT(*) FROM tags) as total_tags,
+        (SELECT COUNT(DISTINCT author_id) FROM posts) as authors_count,
+        (SELECT COUNT(*) FROM content_reports WHERE status = 'pending') as pending_reports
+    `);
+    return result.rows[0];
+  },
+
+  /**
+   * Get post hierarchy tree (for Explorer view)
+   * @param {number} pathId - Optional path filter
+   * @returns {Promise<Array>} Hierarchical tree of posts
+   */
+  async getPostHierarchy(pathId = null) {
+    const params = [];
+    let pathFilter = '';
+
+    if (pathId !== null) {
+      pathFilter = 'AND p.path_id = $1';
+      params.push(pathId);
+    }
+
+    const result = await pool.query(`
+      WITH RECURSIVE post_tree AS (
+        -- Root posts (no parent)
+        SELECT
+          p.id, p.title, p.slug, p.parent_id, p.level, p.position,
+          p.category, p.category_post_number, p.author_id, p.created_at,
+          u.display_name as author,
+          ARRAY[p.id] as path_ids,
+          0 as depth,
+          (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        WHERE p.parent_id IS NULL
+          AND p.published = true
+          ${pathFilter}
+
+        UNION ALL
+
+        -- Child posts (recursive)
+        SELECT
+          p.id, p.title, p.slug, p.parent_id, p.level, p.position,
+          p.category, p.category_post_number, p.author_id, p.created_at,
+          u.display_name as author,
+          pt.path_ids || p.id,
+          pt.depth + 1,
+          (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+        FROM posts p
+        INNER JOIN users u ON p.author_id = u.id
+        INNER JOIN post_tree pt ON p.parent_id = pt.id
+        WHERE p.published = true
+          AND pt.depth < 4  -- Max depth to prevent infinite loops
+      )
+      SELECT * FROM post_tree
+      ORDER BY depth, position, created_at
+    `, params);
+
+    return result.rows;
+  },
+
+  /**
+   * Get post with children (for displaying in content area)
+   * @param {number} postId - Post ID
+   * @returns {Promise<Object|null>} Post with children array
+   */
+  async getPostWithChildren(postId) {
+    // Get the post
+    const post = await this.getPostById(postId);
+    if (!post) return null;
+
+    // Get direct children
+    const childrenResult = await pool.query(`
+      SELECT
+        p.id, p.title, p.slug, p.excerpt, p.category, p.category_post_number,
+        p.level, p.position,
+        u.display_name as author,
+        (SELECT COUNT(*) FROM posts WHERE parent_id = p.id AND published = true) as child_count
+      FROM posts p
+      INNER JOIN users u ON p.author_id = u.id
+      WHERE p.parent_id = $1 AND p.published = true
+      ORDER BY p.position ASC, p.created_at ASC
+    `, [postId]);
+
+    post.children = childrenResult.rows;
+    return post;
+  },
+
+  /**
+   * Get breadcrumb trail for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Array of parent posts
+   */
+  async getPostBreadcrumbs(postId) {
+    const result = await pool.query(`
+      WITH RECURSIVE breadcrumb_trail AS (
+        -- Start with the current post
+        SELECT id, title, slug, parent_id, 0 as depth
+        FROM posts
+        WHERE id = $1
+
+        UNION ALL
+
+        -- Get parent posts
+        SELECT p.id, p.title, p.slug, p.parent_id, bt.depth + 1
+        FROM posts p
+        INNER JOIN breadcrumb_trail bt ON p.id = bt.parent_id
+      )
+      SELECT id, title, slug
+      FROM breadcrumb_trail
+      ORDER BY depth DESC
+    `, [postId]);
+
+    return result.rows;
   }
 };
 
-// Export the original db connection (for your existing user management)
-export { db };
+// ============================================
+// USER Management Database Operations
+// Phase 2.2: All methods converted to async ✅
+// ============================================
 
-// USER Management database operations
 export const userDB = {
-  // Get user by ID
-  getUserById(id) {
-    return db.prepare('SELECT id, email, first_name, last_name, role, status, created_at FROM users WHERE id = ?').get(id);
+  /**
+   * Get user by ID
+   * @param {number} id - User ID
+   * @returns {Promise<Object|null>} User object or null
+   */
+  async getUserById(id) {
+    const result = await pool.query(
+      'SELECT id, email, display_name, role, status, created_at FROM users WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
   },
 
-  // Verify current password
+  /**
+   * Get user by email
+   * @param {string} email - User email
+   * @returns {Promise<Object|null>} User object or null
+   */
+  async getUserByEmail(email) {
+    const result = await pool.query(
+      'SELECT * FROM users WHERE email = $1',
+      [email.toLowerCase()]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new user
+   * @param {Object} userData - User data (email, display_name, password_hash, role)
+   * @returns {Promise<Object>} Created user with ID
+   */
+  async createUser(userData) {
+    const { email, display_name, password_hash, role = 'user' } = userData;
+    
+    const result = await pool.query(`
+      INSERT INTO users (email, display_name, password_hash, role, status)
+      VALUES ($1, $2, $3, $4, 'pending')
+      RETURNING id, email, display_name, role, status, created_at
+    `, [email.toLowerCase(), display_name, password_hash, role]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create user');
+    }
+
+    return {
+      success: true,
+      userId: result.rows[0].id,
+      user: result.rows[0]
+    };
+  },
+
+  /**
+   * Verify current password for a user
+   * @param {number} userId - User ID
+   * @param {string} currentPassword - Password to verify
+   * @returns {Promise<boolean>} True if password is correct
+   */
   async verifyPassword(userId, currentPassword) {
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+    const result = await pool.query(
+      'SELECT password_hash FROM users WHERE id = $1',
+      [userId]
+    );
+    const user = result.rows[0];
+
     if (!user) {
       throw new Error('User not found');
     }
-    
+
     return await bcrypt.compare(currentPassword, user.password_hash);
   },
 
-  // Change user password
+  /**
+   * Change user password
+   * @param {number} userId - User ID
+   * @param {string} currentPassword - Current password for verification
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>} Success message
+   */
   async changePassword(userId, currentPassword, newPassword) {
-    // Verify current password first
     const isCurrentPasswordValid = await this.verifyPassword(userId, currentPassword);
     if (!isCurrentPasswordValid) {
       throw new Error('Current password is incorrect');
     }
-    
-    // Hash new password
+
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    
-    // Update password in database
-    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, userId);
-    
-    if (result.changes === 0) {
+    const result = await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newPasswordHash, userId]
+    );
+
+    if (result.rowCount === 0) {
       throw new Error('Failed to update password');
     }
-    
+
     return { success: true, message: 'Password updated successfully' };
   },
 
-  // Admin: Reset user password (without requiring current password)
-  async resetUserPassword(adminId, targetUserId, newPassword) {
-    // Check if admin has permission
-    const admin = db.prepare('SELECT role FROM users WHERE id = ?').get(adminId);
+  /**
+   * Complete immediate account deletion
+   * @param {number} userId - User ID
+   * @param {string} reason - Reason for deletion
+   * @returns {Promise<Object>} Deletion confirmation
+   */
+  async completeAccountDeletion(userId, reason = '') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Get user info before deletion
+      const userResult = await client.query('SELECT email FROM users WHERE id = $1', [userId]);
+      const user = userResult.rows[0];
+
+      if (!user) {
+        throw new Error('User not found');
+      }
+
+      // Count posts before deletion
+      const postCountResult = await client.query(
+        'SELECT COUNT(*) as count FROM posts WHERE author_id = $1',
+        [userId]
+      );
+      const postCount = parseInt(postCountResult.rows[0].count);
+
+      // Delete post tags first (cascade will handle this, but being explicit)
+      await client.query(
+        'DELETE FROM post_tags WHERE post_id IN (SELECT id FROM posts WHERE author_id = $1)',
+        [userId]
+      );
+
+      // Delete posts
+      await client.query('DELETE FROM posts WHERE author_id = $1', [userId]);
+
+      // Delete user
+      await client.query('DELETE FROM users WHERE id = $1', [userId]);
+
+      await client.query('COMMIT');
+
+      console.log(`🗑️ User ${user.email} deleted their account. ${postCount} posts removed. Reason: ${reason}`);
+
+      return {
+        success: true,
+        message: `Account and ${postCount} posts deleted permanently`,
+        deletedPosts: postCount
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Get users with pending deletion requests
+   * @returns {Promise<Array>} Array of users with pending deletion requests
+   */
+  async getPendingDeletions() {
+    const result = await pool.query(`
+      SELECT id, email, display_name, deletion_requested_at, deletion_reason,
+             (SELECT COUNT(*) FROM posts WHERE author_id = users.id) as post_count
+      FROM users 
+      WHERE status = 'deletion_requested'
+      ORDER BY deletion_requested_at ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Create a content report
+   * @param {Object} reportData - Report data
+   * @returns {Promise<Object>} Success with report ID
+   */
+  async createContentReport(reportData) {
+    const {
+      issue_type,
+      description,
+      reporter_email,
+      post_id,
+      post_title,
+      post_url,
+      reporter_ip,
+      user_agent
+    } = reportData;
+
+    const result = await pool.query(`
+      INSERT INTO content_reports (
+        issue_type, description, reporter_email, post_id, post_title,
+        post_url, reporter_ip, user_agent
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      RETURNING id
+    `, [
+      issue_type,
+      description,
+      reporter_email,
+      post_id,
+      post_title,
+      post_url,
+      reporter_ip,
+      user_agent
+    ]);
+
+    return {
+      success: true,
+      reportId: result.rows[0].id
+    };
+  },
+
+  /**
+   * Get all content reports
+   * @returns {Promise<Array>} All content reports
+   */
+  async getAllContentReports() {
+    const result = await pool.query(`
+      SELECT cr.*, 
+             p.title as current_post_title,
+             u.display_name
+      FROM content_reports cr
+      LEFT JOIN posts p ON cr.post_id = p.id
+      LEFT JOIN users u ON cr.resolved_by = u.id
+      ORDER BY 
+        CASE cr.status 
+          WHEN 'pending' THEN 1 
+          WHEN 'reviewed' THEN 2 
+          ELSE 3 
+        END,
+        cr.created_at DESC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get content report by ID
+   * @param {number} id - Report ID
+   * @returns {Promise<Object|null>} Report object or null
+   */
+  async getContentReportById(id) {
+    const result = await pool.query(`
+      SELECT cr.*, 
+             p.title as current_post_title,
+             u.display_name
+      FROM content_reports cr
+      LEFT JOIN posts p ON cr.post_id = p.id
+      LEFT JOIN users u ON cr.resolved_by = u.id
+      WHERE cr.id = $1
+    `, [id]);
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Update content report status
+   * @param {number} reportId - Report ID
+   * @param {string} status - New status
+   * @param {string} adminResponse - Admin response text
+   * @param {number} resolvedBy - User ID who resolved it
+   * @returns {Promise<Object>} Success message
+   */
+  async updateContentReportStatus(reportId, status, adminResponse = null, resolvedBy = null) {
+    const validStatuses = ['pending', 'reviewed', 'resolved', 'dismissed'];
+    if (!validStatuses.includes(status)) {
+      throw new Error('Invalid status');
+    }
+
+    const resolvedAt = (status === 'resolved' || status === 'dismissed')
+      ? new Date().toISOString()
+      : null;
+
+    const result = await pool.query(`
+      UPDATE content_reports 
+      SET status = $1, admin_response = $2, resolved_by = $3, resolved_at = $4
+      WHERE id = $5
+    `, [status, adminResponse, resolvedBy, resolvedAt, reportId]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Report not found');
+    }
+
+    return { success: true };
+  },
+
+  /**
+   * Reset user password (admin function)
+   * @param {number} adminId - Admin user ID
+   * @param {number} userId - User whose password to reset
+   * @param {string} newPassword - New password
+   * @returns {Promise<Object>} Success with user details
+   */
+  async resetUserPassword(adminId, userId, newPassword) {
+    // Verify admin exists and has admin role
+    const adminResult = await pool.query(
+      'SELECT role FROM users WHERE id = $1',
+      [adminId]
+    );
+    const admin = adminResult.rows[0];
+
     if (!admin || admin.role !== 'admin') {
-      throw new Error('Unauthorized: Admin access required');
+      throw new Error('Only administrators can reset passwords');
     }
-    
-    // Check if target user exists
-    const targetUser = db.prepare('SELECT id FROM users WHERE id = ?').get(targetUserId);
-    if (!targetUser) {
-      throw new Error('Target user not found');
+
+    // Verify target user exists
+    const userResult = await pool.query(
+      'SELECT id, email, display_name FROM users WHERE id = $1',
+      [userId]
+    );
+    const user = userResult.rows[0];
+
+    if (!user) {
+      throw new Error('User not found');
     }
-    
-    // Hash new password
+
+    // Hash the new password
     const newPasswordHash = await bcrypt.hash(newPassword, 10);
-    
-    // Update password
-    const result = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newPasswordHash, targetUserId);
-    
-    if (result.changes === 0) {
-      throw new Error('Failed to reset password');
+
+    // Update the password
+    const updateResult = await pool.query(
+      'UPDATE users SET password_hash = $1 WHERE id = $2',
+      [newPasswordHash, userId]
+    );
+
+    if (updateResult.rowCount === 0) {
+      throw new Error('Failed to update password');
     }
-    
-    return { success: true, message: 'Password reset successfully' };
+
+    console.log(`🔑 Admin (ID: ${adminId}) reset password for user: ${user.email} (${user.display_name})`);
+
+    return {
+      success: true,
+      message: 'Password reset successfully',
+      userId: user.id,
+      userEmail: user.email,
+      displayName: user.display_name
+    };
   }
 };
+
+// ============================================
+// GROUP Management Database Operations
+// ============================================
+
+export const groupDB = {
+  /**
+   * Get all groups
+   * @returns {Promise<Array>} All groups with member counts
+   */
+  async getAllGroups() {
+    const result = await pool.query(`
+      SELECT g.*,
+             COUNT(ug.user_id) as member_count
+      FROM groups g
+      LEFT JOIN user_groups ug ON g.id = ug.group_id
+      GROUP BY g.id
+      ORDER BY g.name ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get group by ID
+   * @param {number} id - Group ID
+   * @returns {Promise<Object|null>} Group object or null
+   */
+  async getGroupById(id) {
+    const result = await pool.query(`
+      SELECT g.*,
+             COUNT(ug.user_id) as member_count
+      FROM groups g
+      LEFT JOIN user_groups ug ON g.id = ug.group_id
+      WHERE g.id = $1
+      GROUP BY g.id
+    `, [id]);
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new group
+   * @param {Object} groupData - Group data (name, description)
+   * @returns {Promise<Object>} Created group with ID
+   */
+  async createGroup(groupData) {
+    const { name, description } = groupData;
+
+    const result = await pool.query(`
+      INSERT INTO groups (name, description)
+      VALUES ($1, $2)
+      RETURNING id, name, description, created_at
+    `, [name, description]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create group');
+    }
+
+    return {
+      success: true,
+      group: result.rows[0]
+    };
+  },
+
+  /**
+   * Update group
+   * @param {number} id - Group ID
+   * @param {Object} groupData - Updated data (name, description)
+   * @returns {Promise<Object>} Success message
+   */
+  async updateGroup(id, groupData) {
+    const { name, description } = groupData;
+
+    const result = await pool.query(`
+      UPDATE groups
+      SET name = $1, description = $2
+      WHERE id = $3
+      RETURNING id, name, description, created_at
+    `, [name, description, id]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    return {
+      success: true,
+      group: result.rows[0]
+    };
+  },
+
+  /**
+   * Delete group
+   * @param {number} id - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async deleteGroup(id) {
+    const result = await pool.query(
+      'DELETE FROM groups WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    return { success: true, message: 'Group deleted successfully' };
+  },
+
+  /**
+   * Get users in a group
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Array>} Users in the group
+   */
+  async getUsersInGroup(groupId) {
+    const result = await pool.query(`
+      SELECT u.id, u.email, u.display_name, u.role, u.status, ug.joined_at
+      FROM users u
+      INNER JOIN user_groups ug ON u.id = ug.user_id
+      WHERE ug.group_id = $1
+      ORDER BY ug.joined_at DESC
+    `, [groupId]);
+    return result.rows;
+  },
+
+  /**
+   * Get groups for a user
+   * @param {number} userId - User ID
+   * @returns {Promise<Array>} Groups the user belongs to
+   */
+  async getGroupsForUser(userId) {
+    const result = await pool.query(`
+      SELECT g.id, g.name, g.description, ug.joined_at
+      FROM groups g
+      INNER JOIN user_groups ug ON g.id = ug.group_id
+      WHERE ug.user_id = $1
+      ORDER BY g.name ASC
+    `, [userId]);
+    return result.rows;
+  },
+
+  /**
+   * Add user to group
+   * @param {number} userId - User ID
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async addUserToGroup(userId, groupId) {
+    // Check if user exists
+    const userResult = await pool.query('SELECT id FROM users WHERE id = $1', [userId]);
+    if (userResult.rowCount === 0) {
+      throw new Error('User not found');
+    }
+
+    // Check if group exists
+    const groupResult = await pool.query('SELECT id FROM groups WHERE id = $1', [groupId]);
+    if (groupResult.rowCount === 0) {
+      throw new Error('Group not found');
+    }
+
+    // Add user to group (ON CONFLICT prevents duplicate entries)
+    const result = await pool.query(`
+      INSERT INTO user_groups (user_id, group_id)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id, group_id) DO NOTHING
+      RETURNING user_id, group_id, joined_at
+    `, [userId, groupId]);
+
+    if (result.rowCount === 0) {
+      return { success: true, message: 'User already in group' };
+    }
+
+    return { success: true, message: 'User added to group successfully' };
+  },
+
+  /**
+   * Remove user from group
+   * @param {number} userId - User ID
+   * @param {number} groupId - Group ID
+   * @returns {Promise<Object>} Success message
+   */
+  async removeUserFromGroup(userId, groupId) {
+    const result = await pool.query(
+      'DELETE FROM user_groups WHERE user_id = $1 AND group_id = $2',
+      [userId, groupId]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('User not in group');
+    }
+
+    return { success: true, message: 'User removed from group successfully' };
+  },
+
+  /**
+   * Get all users with their groups
+   * @returns {Promise<Array>} All users with group information
+   */
+  async getAllUsersWithGroups() {
+    const result = await pool.query(`
+      SELECT u.id, u.email, u.display_name, u.role, u.status, u.created_at,
+             array_agg(DISTINCT jsonb_build_object(
+               'id', g.id,
+               'name', g.name,
+               'joined_at', ug.joined_at
+             )) FILTER (WHERE g.id IS NOT NULL) as groups
+      FROM users u
+      LEFT JOIN user_groups ug ON u.id = ug.user_id
+      LEFT JOIN groups g ON ug.group_id = g.id
+      GROUP BY u.id
+      ORDER BY u.display_name ASC
+    `);
+    return result.rows;
+  }
+};
+
+// ============================================
+// CATEGORY Management Database Operations
+// ============================================
+
+export const categoryDB = {
+  /**
+   * Get all categories ordered by position
+   * @returns {Promise<Array>} All categories
+   */
+  async getAllCategories() {
+    const result = await pool.query(`
+      SELECT id, value, label, position, created_at
+      FROM categories
+      ORDER BY position ASC, label ASC
+    `);
+    return result.rows;
+  },
+
+  /**
+   * Get category by ID
+   * @param {number} id - Category ID
+   * @returns {Promise<Object|null>} Category object or null
+   */
+  async getCategoryById(id) {
+    const result = await pool.query(
+      'SELECT id, value, label, position, created_at FROM categories WHERE id = $1',
+      [id]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Get category by value
+   * @param {string} value - Category value
+   * @returns {Promise<Object|null>} Category object or null
+   */
+  async getCategoryByValue(value) {
+    const result = await pool.query(
+      'SELECT id, value, label, position, created_at FROM categories WHERE value = $1',
+      [value]
+    );
+    return result.rows[0] || null;
+  },
+
+  /**
+   * Create new category
+   * @param {Object} categoryData - Category data (value, label, position)
+   * @returns {Promise<Object>} Created category
+   */
+  async createCategory(categoryData) {
+    const { value, label, position = 0 } = categoryData;
+
+    // Get max position if not specified
+    let categoryPosition = position;
+    if (position === 0) {
+      const maxResult = await pool.query('SELECT COALESCE(MAX(position), 0) + 1 as next_pos FROM categories');
+      categoryPosition = maxResult.rows[0].next_pos;
+    }
+
+    const result = await pool.query(`
+      INSERT INTO categories (value, label, position)
+      VALUES ($1, $2, $3)
+      RETURNING id, value, label, position, created_at
+    `, [value.toLowerCase().replace(/[^a-z0-9-]/g, '-'), label, categoryPosition]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Failed to create category');
+    }
+
+    return {
+      success: true,
+      category: result.rows[0]
+    };
+  },
+
+  /**
+   * Update category
+   * @param {number} id - Category ID
+   * @param {Object} categoryData - Updated data (value, label, position)
+   * @returns {Promise<Object>} Success message
+   */
+  async updateCategory(id, categoryData) {
+    const { value, label, position } = categoryData;
+
+    const result = await pool.query(`
+      UPDATE categories
+      SET value = $1, label = $2, position = $3
+      WHERE id = $4
+      RETURNING id, value, label, position, created_at
+    `, [value.toLowerCase().replace(/[^a-z0-9-]/g, '-'), label, position, id]);
+
+    if (result.rowCount === 0) {
+      throw new Error('Category not found');
+    }
+
+    return {
+      success: true,
+      category: result.rows[0]
+    };
+  },
+
+  /**
+   * Delete category
+   * @param {number} id - Category ID
+   * @returns {Promise<Object>} Success message
+   */
+  async deleteCategory(id) {
+    // Check if category is in use
+    const usageResult = await pool.query(
+      'SELECT COUNT(*) as count FROM posts WHERE category = (SELECT value FROM categories WHERE id = $1)',
+      [id]
+    );
+    const usageCount = parseInt(usageResult.rows[0].count);
+
+    if (usageCount > 0) {
+      throw new Error(`Cannot delete category: ${usageCount} posts are using it`);
+    }
+
+    const result = await pool.query(
+      'DELETE FROM categories WHERE id = $1',
+      [id]
+    );
+
+    if (result.rowCount === 0) {
+      throw new Error('Category not found');
+    }
+
+    return { success: true, message: 'Category deleted successfully' };
+  },
+
+  /**
+   * Reorder categories
+   * @param {Array} orderedIds - Array of category IDs in new order
+   * @returns {Promise<Object>} Success message
+   */
+  async reorderCategories(orderedIds) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      for (let i = 0; i < orderedIds.length; i++) {
+        await client.query(
+          'UPDATE categories SET position = $1 WHERE id = $2',
+          [i + 1, orderedIds[i]]
+        );
+      }
+
+      await client.query('COMMIT');
+
+      return { success: true, message: 'Categories reordered successfully' };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+};
+
+/**
+ * Document chunks database operations for vectorization
+ */
+export const chunksDB = {
+  /**
+   * Save chunks with embeddings for a post
+   * @param {number} postId - Post ID
+   * @param {string[]} chunks - Array of text chunks
+   * @param {number[][]} embeddings - Array of embedding vectors
+   * @param {string} sourceType - Source type ('post', 'html', 'pdf', 'docx')
+   */
+  async saveChunks(postId, chunks, embeddings, sourceType = 'post') {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Delete existing chunks for this post
+      await client.query('DELETE FROM document_chunks WHERE post_id = $1', [postId]);
+
+      // Insert new chunks with embeddings
+      for (let i = 0; i < chunks.length; i++) {
+        // Convert embedding array to pgvector format: [1,2,3]
+        const embeddingStr = '[' + embeddings[i].join(',') + ']';
+
+        await client.query(
+          `INSERT INTO document_chunks (post_id, chunk_index, chunk_text, embedding)
+           VALUES ($1, $2, $3, $4::vector)`,
+          [postId, i, chunks[i], embeddingStr]
+        );
+      }
+
+      // Update post metadata
+      await client.query(
+        `UPDATE posts
+         SET vectorized_at = CURRENT_TIMESTAMP,
+             chunk_count = $1,
+             source_type = $2
+         WHERE id = $3`,
+        [chunks.length, sourceType, postId]
+      );
+
+      await client.query('COMMIT');
+
+      console.log(`✅ Saved ${chunks.length} chunks for post ${postId}`);
+      return { success: true, chunkCount: chunks.length };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      console.error('❌ Error saving chunks:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  /**
+   * Search for similar chunks using vector similarity
+   * @param {number[]} queryEmbedding - Query embedding vector
+   * @param {number} limit - Maximum number of results
+   * @returns {Promise<Array>} Similar chunks with post info
+   */
+  async searchSimilar(queryEmbedding, limit = 10, userId = null, userRole = 'user') {
+    // Convert embedding array to pgvector format
+    const embeddingStr = '[' + queryEmbedding.join(',') + ']';
+
+    const isAdmin = userRole === 'admin';
+
+    // Fetch all chunks with similarity scores and permission filtering
+    // This avoids ivfflat index issues with small datasets
+    const result = await pool.query(
+      `SELECT DISTINCT ON (dc.id)
+         dc.id as chunk_id,
+         dc.post_id,
+         dc.chunk_index,
+         dc.chunk_text,
+         p.title,
+         p.slug,
+         p.category,
+         p.source_url,
+         p.source_type,
+         1 - (dc.embedding <=> $1::vector) as similarity
+       FROM document_chunks dc
+       JOIN posts p ON dc.post_id = p.id
+       LEFT JOIN post_read_groups prg ON p.id = prg.post_id
+       LEFT JOIN user_groups ug ON prg.group_id = ug.group_id AND ug.user_id = $2
+       WHERE p.published = true
+         AND (
+           -- Admins can see everything
+           $3 = true
+           -- Public posts
+           OR p.visibility = 'public'
+           -- User's own posts
+           OR p.author_id = $2
+           -- Group posts where user is a member
+           OR (p.visibility = 'groups' AND ug.user_id IS NOT NULL)
+         )`,
+      [embeddingStr, userId, isAdmin]
+    );
+
+    // Sort by similarity descending and limit
+    const sorted = result.rows
+      .sort((a, b) => b.similarity - a.similarity)
+      .slice(0, parseInt(limit));
+
+    console.log(`   Semantic search: ${result.rows.length} total chunks, returning top ${sorted.length} (filtered by permissions)`);
+    return sorted;
+  },
+
+  /**
+   * Get all chunks for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Chunks ordered by index
+   */
+  async getChunksByPost(postId) {
+    const result = await pool.query(
+      'SELECT * FROM document_chunks WHERE post_id = $1 ORDER BY chunk_index',
+      [postId]
+    );
+    return result.rows;
+  },
+
+  /**
+   * Delete all chunks for a post
+   * @param {number} postId - Post ID
+   */
+  async deleteChunks(postId) {
+    await pool.query('DELETE FROM document_chunks WHERE post_id = $1', [postId]);
+    await pool.query(
+      'UPDATE posts SET vectorized_at = NULL, chunk_count = 0 WHERE id = $1',
+      [postId]
+    );
+  },
+
+  /**
+   * Check if a post has been vectorized
+   * @param {number} postId - Post ID
+   * @returns {Promise<{vectorized: boolean, chunkCount: number, vectorizedAt: Date|null}>}
+   */
+  async getVectorizationStatus(postId) {
+    const result = await pool.query(
+      'SELECT vectorized_at, chunk_count FROM posts WHERE id = $1',
+      [postId]
+    );
+
+    if (result.rows.length === 0) {
+      return { vectorized: false, chunkCount: 0, vectorizedAt: null };
+    }
+
+    const post = result.rows[0];
+    return {
+      vectorized: post.vectorized_at !== null,
+      chunkCount: post.chunk_count || 0,
+      vectorizedAt: post.vectorized_at
+    };
+  },
+
+  /**
+   * Get all vectorized posts
+   * @returns {Promise<Array>} Posts with vectorization info
+   */
+  async getVectorizedPosts() {
+    const result = await pool.query(
+      `SELECT id, title, slug, category, source_url, source_type, chunk_count, vectorized_at
+       FROM posts
+       WHERE vectorized_at IS NOT NULL
+       ORDER BY vectorized_at DESC`
+    );
+    return result.rows;
+  },
+
+  /**
+   * Update source URL for a link post
+   * @param {number} postId - Post ID
+   * @param {string} sourceUrl - External URL
+   */
+  async updateSourceUrl(postId, sourceUrl) {
+    await pool.query(
+      'UPDATE posts SET source_url = $1 WHERE id = $2',
+      [sourceUrl, postId]
+    );
+  },
+
+  // ============================================
+  // Stage 2: Chunk Review Operations
+  // ============================================
+
+  /**
+   * Get unreviewed chunks
+   * @param {number} limit - Maximum number of chunks to return
+   * @param {number|null} postId - Filter by post ID (optional)
+   * @returns {Promise<Array>} Unreviewed chunks
+   */
+  async getUnreviewedChunks(limit = 10, postId = null) {
+    let query = `
+      SELECT dc.id, dc.post_id, dc.chunk_index, dc.chunk_text, p.title as post_title
+      FROM document_chunks dc
+      JOIN posts p ON dc.post_id = p.id
+      WHERE dc.reviewed_at IS NULL
+    `;
+    const params = [];
+
+    if (postId) {
+      params.push(postId);
+      query += ` AND dc.post_id = $${params.length}`;
+    }
+
+    params.push(limit);
+    query += ` ORDER BY dc.post_id, dc.chunk_index LIMIT $${params.length}`;
+
+    const result = await pool.query(query, params);
+    return result.rows;
+  },
+
+  /**
+   * Update chunk with review data
+   * @param {number} chunkId - Chunk ID
+   * @param {Object} reviewData - Review results
+   */
+  async updateChunkReview(chunkId, reviewData) {
+    const {
+      quality_score,
+      doc_type,
+      auto_tags,
+      summary,
+      keywords,
+      redundant_of
+    } = reviewData;
+
+    await pool.query(
+      `UPDATE document_chunks
+       SET quality_score = $1,
+           doc_type = $2,
+           auto_tags = $3,
+           summary = $4,
+           keywords = $5,
+           redundant_of = $6,
+           reviewed_at = CURRENT_TIMESTAMP
+       WHERE id = $7`,
+      [
+        quality_score,
+        doc_type,
+        auto_tags,
+        summary,
+        keywords,
+        redundant_of || null,
+        chunkId
+      ]
+    );
+  },
+
+  /**
+   * Find similar chunks for redundancy detection
+   * @param {number} chunkId - Chunk ID to compare against
+   * @param {number} threshold - Similarity threshold (default: 0.92)
+   * @returns {Promise<Array>} Similar chunks
+   */
+  async findSimilarChunks(chunkId, threshold = 0.92) {
+    const result = await pool.query(
+      `SELECT
+         dc2.id,
+         dc2.post_id,
+         dc2.chunk_text,
+         1 - (dc1.embedding <=> dc2.embedding) as similarity
+       FROM document_chunks dc1
+       JOIN document_chunks dc2 ON dc1.id != dc2.id
+       WHERE dc1.id = $1
+         AND 1 - (dc1.embedding <=> dc2.embedding) > $2
+       ORDER BY similarity DESC
+       LIMIT 5`,
+      [chunkId, threshold]
+    );
+    return result.rows;
+  },
+
+  /**
+   * Mark chunk as redundant
+   * @param {number} chunkId - Chunk to mark as redundant
+   * @param {number} redundantOfId - Original chunk ID
+   */
+  async markRedundant(chunkId, redundantOfId) {
+    await pool.query(
+      'UPDATE document_chunks SET redundant_of = $1 WHERE id = $2',
+      [redundantOfId, chunkId]
+    );
+  },
+
+  /**
+   * Get review statistics
+   * @returns {Promise<Object>} Review stats
+   */
+  async getReviewStats() {
+    const result = await pool.query(`
+      SELECT
+        COUNT(*) as total_chunks,
+        COUNT(reviewed_at) as reviewed_chunks,
+        COUNT(*) FILTER (WHERE quality_score < 0.5) as low_quality,
+        COUNT(redundant_of) as redundant,
+        COUNT(*) FILTER (WHERE doc_type = 'technicaldoc') as technicaldoc_count,
+        COUNT(*) FILTER (WHERE doc_type = 'meetingsummary') as meetingsummary_count
+      FROM document_chunks
+    `);
+    return result.rows[0];
+  },
+
+  /**
+   * Get chunks with review data for a post
+   * @param {number} postId - Post ID
+   * @returns {Promise<Array>} Reviewed chunks
+   */
+  async getReviewedChunks(postId) {
+    const result = await pool.query(
+      `SELECT id, chunk_index, chunk_text, quality_score, doc_type,
+              auto_tags, summary, keywords, redundant_of, reviewed_at
+       FROM document_chunks
+       WHERE post_id = $1
+       ORDER BY chunk_index`,
+      [postId]
+    );
+    return result.rows;
+  }
+};
+
+export { pathsDB } from './paths.js';

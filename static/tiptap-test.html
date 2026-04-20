@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TipTap Editor Test</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+      background: #f5f5f5;
+    }
+
+    h1 {
+      color: #1f2937;
+      margin-bottom: 0.5rem;
+    }
+
+    .subtitle {
+      color: #6b7280;
+      margin-bottom: 2rem;
+    }
+
+    .editor-container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      overflow: hidden;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      padding: 12px;
+      background: #f9fafb;
+      border-bottom: 1px solid #e5e7eb;
+    }
+
+    .toolbar-group {
+      display: flex;
+      gap: 2px;
+      padding-right: 8px;
+      border-right: 1px solid #e5e7eb;
+      margin-right: 8px;
+    }
+
+    .toolbar-group:last-child {
+      border-right: none;
+      margin-right: 0;
+      padding-right: 0;
+    }
+
+    .toolbar button {
+      padding: 8px 12px;
+      border: 1px solid #d1d5db;
+      background: white;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+      min-width: 36px;
+    }
+
+    .toolbar button:hover {
+      background: #f3f4f6;
+      border-color: #9ca3af;
+    }
+
+    .toolbar button.is-active {
+      background: #2563eb;
+      color: white;
+      border-color: #2563eb;
+    }
+
+    .toolbar button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .table-controls {
+      background: #fef3c7;
+      padding: 8px 12px;
+      border-bottom: 1px solid #fcd34d;
+      display: none;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .table-controls.visible {
+      display: flex;
+    }
+
+    .table-controls button {
+      padding: 6px 12px;
+      border: 1px solid #f59e0b;
+      background: white;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 13px;
+      transition: all 0.2s;
+    }
+
+    .table-controls button:hover {
+      background: #fde68a;
+    }
+
+    .table-controls button.danger {
+      border-color: #ef4444;
+      color: #dc2626;
+    }
+
+    .table-controls button.danger:hover {
+      background: #fee2e2;
+    }
+
+    .editor {
+      padding: 20px;
+      min-height: 400px;
+      outline: none;
+    }
+
+    .editor:focus {
+      outline: none;
+    }
+
+    /* Editor content styles */
+    .editor h1 { font-size: 2em; margin: 0.5em 0; }
+    .editor h2 { font-size: 1.5em; margin: 0.5em 0; }
+    .editor h3 { font-size: 1.25em; margin: 0.5em 0; }
+    .editor p { margin: 0.5em 0; line-height: 1.6; }
+    .editor ul, .editor ol { padding-left: 1.5em; margin: 0.5em 0; }
+    .editor blockquote {
+      border-left: 4px solid #2563eb;
+      padding-left: 1em;
+      margin: 1em 0;
+      color: #6b7280;
+      font-style: italic;
+    }
+    .editor code {
+      background: #f3f4f6;
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: monospace;
+    }
+    .editor pre {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 1em;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+    .editor pre code {
+      background: none;
+      padding: 0;
+    }
+    .editor img {
+      max-width: 100%;
+      height: auto;
+    }
+
+    /* Table styles */
+    .editor table {
+      border-collapse: collapse;
+      width: 100%;
+      margin: 1em 0;
+      table-layout: fixed;
+    }
+
+    .editor th,
+    .editor td {
+      border: 2px solid #d1d5db;
+      padding: 8px 12px;
+      text-align: left;
+      position: relative;
+      min-width: 100px;
+    }
+
+    .editor th {
+      background: #f3f4f6;
+      font-weight: 600;
+    }
+
+    .editor tr:hover td {
+      background: #f9fafb;
+    }
+
+    /* Selected cell highlight */
+    .editor .selectedCell {
+      background: #dbeafe !important;
+    }
+
+    /* Column resize handle */
+    .editor .column-resize-handle {
+      position: absolute;
+      right: -2px;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: #2563eb;
+      cursor: col-resize;
+    }
+
+    .output-section {
+      margin-top: 2rem;
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .output-section h3 {
+      margin: 0 0 1rem 0;
+      color: #374151;
+    }
+
+    .output-section pre {
+      background: #1f2937;
+      color: #f9fafb;
+      padding: 1rem;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      max-height: 200px;
+    }
+
+    .comparison {
+      margin-top: 2rem;
+      background: #ecfdf5;
+      border: 1px solid #10b981;
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+
+    .comparison h3 {
+      color: #059669;
+      margin: 0 0 1rem 0;
+    }
+
+    .comparison ul {
+      margin: 0;
+      padding-left: 1.5rem;
+    }
+
+    .comparison li {
+      margin: 0.5rem 0;
+      color: #374151;
+    }
+  </style>
+</head>
+<body>
+  <h1>TipTap Editor Prototype</h1>
+  <p class="subtitle">Test the table functionality - try adding/deleting rows and columns!</p>
+
+  <div class="editor-container">
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <button id="btn-h1" title="Heading 1">H1</button>
+        <button id="btn-h2" title="Heading 2">H2</button>
+        <button id="btn-h3" title="Heading 3">H3</button>
+        <button id="btn-paragraph" title="Paragraph">P</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-bold" title="Bold"><b>B</b></button>
+        <button id="btn-italic" title="Italic"><i>I</i></button>
+        <button id="btn-strike" title="Strikethrough"><s>S</s></button>
+        <button id="btn-code" title="Code">&lt;&gt;</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-bullet-list" title="Bullet List">• List</button>
+        <button id="btn-ordered-list" title="Numbered List">1. List</button>
+        <button id="btn-blockquote" title="Quote">"</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-table" title="Insert Table">▦ Table</button>
+      </div>
+      <div class="toolbar-group">
+        <button id="btn-undo" title="Undo">↩</button>
+        <button id="btn-redo" title="Redo">↪</button>
+      </div>
+    </div>
+
+    <div class="table-controls" id="table-controls">
+      <span style="font-weight: 600; color: #92400e;">Table:</span>
+      <button id="btn-add-row-before">+ Row Above</button>
+      <button id="btn-add-row-after">+ Row Below</button>
+      <button id="btn-add-col-before">+ Col Left</button>
+      <button id="btn-add-col-after">+ Col Right</button>
+      <button id="btn-delete-row" class="danger">Delete Row</button>
+      <button id="btn-delete-col" class="danger">Delete Col</button>
+      <button id="btn-delete-table" class="danger">Delete Table</button>
+      <button id="btn-toggle-header">Toggle Header</button>
+    </div>
+
+    <div class="editor" id="editor"></div>
+  </div>
+
+  <div class="comparison">
+    <h3>Compared to Quill - TipTap Tables Can:</h3>
+    <ul>
+      <li><strong>Add rows/columns</strong> - Click buttons above when cursor is in table</li>
+      <li><strong>Delete rows/columns</strong> - Remove specific rows or columns</li>
+      <li><strong>Toggle header row</strong> - Make first row a header</li>
+      <li><strong>Navigate with Tab</strong> - Move between cells</li>
+      <li><strong>Resize columns</strong> - Drag column borders (when extension enabled)</li>
+    </ul>
+  </div>
+
+  <div class="output-section">
+    <h3>HTML Output (updates live)</h3>
+    <pre id="html-output"></pre>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "@tiptap/core": "https://esm.sh/@tiptap/core@2.1.13",
+      "@tiptap/starter-kit": "https://esm.sh/@tiptap/starter-kit@2.1.13",
+      "@tiptap/extension-table": "https://esm.sh/@tiptap/extension-table@2.1.13",
+      "@tiptap/extension-table-row": "https://esm.sh/@tiptap/extension-table-row@2.1.13",
+      "@tiptap/extension-table-cell": "https://esm.sh/@tiptap/extension-table-cell@2.1.13",
+      "@tiptap/extension-table-header": "https://esm.sh/@tiptap/extension-table-header@2.1.13"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import { Editor } from '@tiptap/core';
+    import StarterKit from '@tiptap/starter-kit';
+    import Table from '@tiptap/extension-table';
+    import TableRow from '@tiptap/extension-table-row';
+    import TableCell from '@tiptap/extension-table-cell';
+    import TableHeader from '@tiptap/extension-table-header';
+
+    // Initialize editor
+    const editor = new Editor({
+      element: document.querySelector('#editor'),
+      extensions: [
+        StarterKit,
+        Table.configure({
+          resizable: true,
+          HTMLAttributes: {
+            class: 'tiptap-table',
+          },
+        }),
+        TableRow,
+        TableCell,
+        TableHeader,
+      ],
+      content: `
+        <h2>Welcome to TipTap!</h2>
+        <p>This is a test editor with <strong>full table support</strong>. Try the features below:</p>
+        <h3>Sample Table</h3>
+        <table>
+          <tr>
+            <th>Feature</th>
+            <th>Quill</th>
+            <th>TipTap</th>
+          </tr>
+          <tr>
+            <td>Add Row</td>
+            <td>No</td>
+            <td>Yes</td>
+          </tr>
+          <tr>
+            <td>Delete Row</td>
+            <td>No</td>
+            <td>Yes</td>
+          </tr>
+        </table>
+        <p>Click inside the table to see the table controls appear!</p>
+      `,
+      onUpdate: ({ editor }) => {
+        // Update HTML output
+        document.getElementById('html-output').textContent = editor.getHTML();
+
+        // Show/hide table controls based on cursor position
+        const tableControls = document.getElementById('table-controls');
+        if (editor.isActive('table')) {
+          tableControls.classList.add('visible');
+        } else {
+          tableControls.classList.remove('visible');
+        }
+      },
+      onSelectionUpdate: ({ editor }) => {
+        // Update button states
+        document.getElementById('btn-bold').classList.toggle('is-active', editor.isActive('bold'));
+        document.getElementById('btn-italic').classList.toggle('is-active', editor.isActive('italic'));
+        document.getElementById('btn-strike').classList.toggle('is-active', editor.isActive('strike'));
+        document.getElementById('btn-code').classList.toggle('is-active', editor.isActive('code'));
+        document.getElementById('btn-bullet-list').classList.toggle('is-active', editor.isActive('bulletList'));
+        document.getElementById('btn-ordered-list').classList.toggle('is-active', editor.isActive('orderedList'));
+        document.getElementById('btn-blockquote').classList.toggle('is-active', editor.isActive('blockquote'));
+        document.getElementById('btn-h1').classList.toggle('is-active', editor.isActive('heading', { level: 1 }));
+        document.getElementById('btn-h2').classList.toggle('is-active', editor.isActive('heading', { level: 2 }));
+        document.getElementById('btn-h3').classList.toggle('is-active', editor.isActive('heading', { level: 3 }));
+
+        // Show/hide table controls
+        const tableControls = document.getElementById('table-controls');
+        if (editor.isActive('table')) {
+          tableControls.classList.add('visible');
+        } else {
+          tableControls.classList.remove('visible');
+        }
+      },
+    });
+
+    // Initial HTML output
+    document.getElementById('html-output').textContent = editor.getHTML();
+
+    // Toolbar button handlers
+    document.getElementById('btn-bold').addEventListener('click', () => editor.chain().focus().toggleBold().run());
+    document.getElementById('btn-italic').addEventListener('click', () => editor.chain().focus().toggleItalic().run());
+    document.getElementById('btn-strike').addEventListener('click', () => editor.chain().focus().toggleStrike().run());
+    document.getElementById('btn-code').addEventListener('click', () => editor.chain().focus().toggleCode().run());
+    document.getElementById('btn-bullet-list').addEventListener('click', () => editor.chain().focus().toggleBulletList().run());
+    document.getElementById('btn-ordered-list').addEventListener('click', () => editor.chain().focus().toggleOrderedList().run());
+    document.getElementById('btn-blockquote').addEventListener('click', () => editor.chain().focus().toggleBlockquote().run());
+    document.getElementById('btn-h1').addEventListener('click', () => editor.chain().focus().toggleHeading({ level: 1 }).run());
+    document.getElementById('btn-h2').addEventListener('click', () => editor.chain().focus().toggleHeading({ level: 2 }).run());
+    document.getElementById('btn-h3').addEventListener('click', () => editor.chain().focus().toggleHeading({ level: 3 }).run());
+    document.getElementById('btn-paragraph').addEventListener('click', () => editor.chain().focus().setParagraph().run());
+    document.getElementById('btn-undo').addEventListener('click', () => editor.chain().focus().undo().run());
+    document.getElementById('btn-redo').addEventListener('click', () => editor.chain().focus().redo().run());
+
+    // Table button
+    document.getElementById('btn-table').addEventListener('click', () => {
+      editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
+    });
+
+    // Table control handlers
+    document.getElementById('btn-add-row-before').addEventListener('click', () => editor.chain().focus().addRowBefore().run());
+    document.getElementById('btn-add-row-after').addEventListener('click', () => editor.chain().focus().addRowAfter().run());
+    document.getElementById('btn-add-col-before').addEventListener('click', () => editor.chain().focus().addColumnBefore().run());
+    document.getElementById('btn-add-col-after').addEventListener('click', () => editor.chain().focus().addColumnAfter().run());
+    document.getElementById('btn-delete-row').addEventListener('click', () => editor.chain().focus().deleteRow().run());
+    document.getElementById('btn-delete-col').addEventListener('click', () => editor.chain().focus().deleteColumn().run());
+    document.getElementById('btn-delete-table').addEventListener('click', () => editor.chain().focus().deleteTable().run());
+    document.getElementById('btn-toggle-header').addEventListener('click', () => editor.chain().focus().toggleHeaderRow().run());
+  </script>
+</body>
+</html>
